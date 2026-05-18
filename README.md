@@ -97,21 +97,12 @@ The framework adapts Goal-Question-Metric methodology to LLM-specific challenges
    cp .env.example .env
    ```
 
-2. **Install dependencies**
+2. **Run with Docker Compose**
    ```bash
-   poetry install
+   docker-compose up -d
    ```
 
-3. **Run with Docker Compose**
-   ```bash
-   docker-compose up --build
-
-   cd ./front/
-   npm install
-   npm run dev
-   ```
-
-4. **Access services**
+3. **Access services**
    - FastAPI API: http://localhost:8000/docs
    - Frontend Dashboard: http://localhost:3000
    - Keycloak Admin: http://localhost:8080/admin (admin/admin123)

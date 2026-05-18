@@ -11,6 +11,7 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./scripts/db-init:/docker-entrypoint-initdb.d:ro
     networks:
       - lks-network
     restart: unless-stopped
@@ -19,34 +20,6 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-
-  # One-shot: ensure databases exist before dependent services start
-  db-init:
-    image: postgres:15-alpine
-    container_name: lks-db-init
-    depends_on:
-      postgres:
-        condition: service_healthy
-    environment:
-      PGHOST: postgres
-      PGUSER: ${POSTGRES_USER}
-      PGPASSWORD: ${POSTGRES_PASSWORD}
-    entrypoint: |
-      /bin/sh -c '
-        for db in lks_database keycloak_db sonarqube; do
-          echo "Checking database $$db..."
-          if psql -h postgres -U "$$PGUSER" -d postgres -tc "SELECT 1 FROM pg_database WHERE datname='"'"'$$db'"'"'" | grep -q 1; then
-            echo "Database $$db already exists."
-          else
-            echo "Creating database $$db..."
-            psql -h postgres -U "$$PGUSER" -d postgres -c "CREATE DATABASE \"$$db\""
-          fi
-        done
-        echo "All databases ready."
-      '
-    networks:
-      - lks-network
-    restart: "no"
 
   # Keycloak Identity Provider
   keycloak:
@@ -70,20 +43,19 @@ services:
       - --import-realm
     ports:
       - "8080:8080"
-      - "8443:8443"
+      - "9000:9000"
     volumes:
       - ./keycloak-config:/opt/keycloak/data/import
       - keycloak_data:/opt/keycloak/data
     depends_on:
       postgres:
         condition: service_healthy
-      db-init:
-        condition: service_completed_successfully
     networks:
       - lks-network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:8080/health/ready || exit 1"]
+      test:
+        ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3 && IFS= read -r status <&3 && [[ \"$$status\" == *200* ]]"]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -130,8 +102,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      db-init:
-        condition: service_completed_successfully
       keycloak:
         condition: service_healthy
     networks:
@@ -142,6 +112,21 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+
+  # Frontend (Next.js)
+  front:
+    image: node:20
+    container_name: front
+    working_dir: /app
+    volumes:
+      - ./front:/app
+      - front_node_modules:/app/node_modules
+    ports:
+      - "9002:9002"
+    command: sh -c "npm install && npm run dev -- --hostname 0.0.0.0"
+    networks:
+      - lks-network
+    restart: unless-stopped
 
   # SonarQube Community Edition
   # sonarqube:
@@ -171,29 +156,29 @@ services:
   #     start_period: 120s
 
   # # Utils:
-  # pgadmin:
-  #   image: dpage/pgadmin4:9.8.0
-  #   container_name: pgadmin
-  #   env_file:
-  #     - .env
-  #   environment:
-  #     - PGADMIN_DEFAULT_EMAIL=${PGADMIN_EMAIL}
-  #     - PGADMIN_DEFAULT_PASSWORD=${PGADMIN_PASSWORD}
-  #     - PGADMIN_CONFIG_SERVER_MODE=False
-  #     - PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED=False
-  #   ports:
-  #     - '5050:80'
-  #   depends_on:
-  #     - postgres
-  #   entrypoint: /bin/sh -c "chmod 600 /pgpass; /entrypoint.sh;"
-  #   user: root
-  #   configs:
-  #     - source: servers.json
-  #       target: /pgadmin4/servers.json
-  #     - source: pgpass
-  #       target: /pgpass
-  #   networks:
-  #     - lks-network
+  pgadmin:
+    image: dpage/pgadmin4:9.8.0
+    container_name: pgadmin
+    env_file:
+      - .env
+    environment:
+      - PGADMIN_DEFAULT_EMAIL=${PGADMIN_DEFAULT_EMAIL}
+      - PGADMIN_DEFAULT_PASSWORD=${PGADMIN_DEFAULT_PASSWORD}
+      - PGADMIN_CONFIG_SERVER_MODE=False
+      - PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED=False
+    ports:
+      - '5050:80'
+    depends_on:
+      - postgres
+    entrypoint: /bin/sh -c "chmod 600 /pgpass; /entrypoint.sh;"
+    user: root
+    configs:
+      - source: servers.json
+        target: /pgadmin4/servers.json
+      - source: pgpass
+        target: /pgpass
+    networks:
+      - lks-network
 
     
 
@@ -201,6 +186,8 @@ volumes:
   postgres_data:
     driver: local
   keycloak_data:
+    driver: local
+  front_node_modules:
     driver: local
   sonarqube_data:
     driver: local
@@ -219,7 +206,7 @@ configs:
         "Name": "lks_database",
         "Host": "postgres",
         "Port": 5432,
-        "MaintenanceDB": "${POSTGRES_DEFAULT_DB}",
+        "MaintenanceDB": "postgres",
         "Username": "${POSTGRES_USER}",
         "PassFile": "/pgpass",
         "SSLMode": "prefer"
