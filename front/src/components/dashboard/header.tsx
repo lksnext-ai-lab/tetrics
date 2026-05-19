@@ -3,16 +3,15 @@
 import React from 'react';
 import { Button } from '@/components/ui/button';
 import { AdminOnlyButton } from '@/components/ui/admin-only-button';
-import { PlusCircle, Edit, ChevronLeft, LogOut, User } from 'lucide-react';
+import { PlusCircle, ChevronLeft, LogOut, User } from 'lucide-react';
 
 interface HeaderProps {
   onAddMeasure?: () => void;
-  onEditContext?: () => void;
   /** Optional handler to navigate back to goals listing */
   onBack?: () => void;
   /** Optional handler when clicking logo/title */
   onLogoClick?: () => void;
-  /** Whether to show the Add Measure and Edit Context buttons */
+  /** Whether to show the Add Measure button */
   showActionButtons?: boolean;
   /** Whether admin-only actions are allowed */
   canManage?: boolean;
@@ -21,7 +20,7 @@ interface HeaderProps {
   onLogout?: () => void;
 }
 
-export function Header({ onAddMeasure, onEditContext, onBack, onLogoClick, showActionButtons = true, canManage = true, username, onLogout }: Readonly<HeaderProps>) {
+export function Header({ onAddMeasure, onBack, onLogoClick, showActionButtons = true, canManage = true, username, onLogout }: Readonly<HeaderProps>) {
   return (
     <header className="flex items-center justify-between p-4 border-b bg-card shadow-sm sticky top-0 z-10">
       <div className="flex items-center gap-3">
@@ -43,26 +42,15 @@ export function Header({ onAddMeasure, onEditContext, onBack, onLogoClick, showA
         </button>
       </div>
       <div className="flex items-center gap-2">
-        {showActionButtons && onAddMeasure && onEditContext && (
-          <>
-            <AdminOnlyButton
-              allowed={canManage}
-              tooltip="Admin role required to add LLM tools."
-              onClick={onAddMeasure}
-            >
-              <PlusCircle className="mr-2 h-4 w-4" />
-              <span className="hidden sm:inline">Add New Measure</span>
-            </AdminOnlyButton>
-            <AdminOnlyButton
-              allowed={canManage}
-              tooltip="Admin role required to edit context."
-              onClick={onEditContext}
-              variant="outline"
-            >
-              <Edit className="mr-2 h-4 w-4" />
-              <span className="hidden sm:inline">Edit Context</span>
-            </AdminOnlyButton>
-          </>
+        {showActionButtons && onAddMeasure && (
+          <AdminOnlyButton
+            allowed={canManage}
+            tooltip="Admin role required to add LLM tools."
+            onClick={onAddMeasure}
+          >
+            <PlusCircle className="mr-2 h-4 w-4" />
+            <span className="hidden sm:inline">Add New Measure</span>
+          </AdminOnlyButton>
         )}
         {username && (
           <div className="flex items-center gap-2 ml-2 pl-2 border-l">

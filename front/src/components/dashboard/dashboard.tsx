@@ -15,7 +15,8 @@ import type {
   EvaluationCriterion,
   LLMToolConfiguration,
   AggregatedScore,
-  Measurement
+  Measurement,
+  Metric
 } from '@/lib/data';
 import {
   fetchEvaluationPrograms,
@@ -31,7 +32,6 @@ import { AddLlmToolDialog } from './add-model-dialog';
 import { AddMeasurementDialog } from './add-measurement-dialog';
 import { AddCriterionDialog } from './add-criterion-dialog';
 import { AddMetricDialog } from './add-metric-dialog';
-import { EditContextSheet } from './edit-context-sheet';
 import { DateFilter } from './date-filter';
 import { DateRange } from 'react-day-picker';
 
@@ -58,11 +58,12 @@ export function Dashboard({ goalId }: Readonly<DashboardProps>) {
   const { toast } = useToast();
 
   const [isAddLlmToolDialogOpen, setIsAddLlmToolDialogOpen] = useState(false);
-  const [isEditContextSheetOpen, setIsEditContextSheetOpen] = useState(false);
   const [isAddMeasurementDialogOpen, setIsAddMeasurementDialogOpen] = useState(false);
   const [isAddCriterionDialogOpen, setIsAddCriterionDialogOpen] = useState(false);
   const [isAddMetricDialogOpen, setIsAddMetricDialogOpen] = useState(false);
   const [editingLlmTool, setEditingLlmTool] = useState<LLMToolConfiguration | undefined>(undefined);
+  const [editingCriterion, setEditingCriterion] = useState<EvaluationCriterion | null>(null);
+  const [editingMetric, setEditingMetric] = useState<Metric | null>(null);
   const [selectedMeasurementContext, setSelectedMeasurementContext] = useState<{
     llmToolConfigId: string;
     metricId: string;
@@ -303,119 +304,105 @@ export function Dashboard({ goalId }: Readonly<DashboardProps>) {
     }
   };
 
-  const handleContextSave = async (
-    updatedProgram: EvaluationProgram, 
-    updatedGoal: Goal, 
-    updatedCriteria: EvaluationCriterion[]
-  ) => {
+  const handleUpdateCriterion = async (criterionId: string, field: 'weight' | 'aggregationStrategy', value: number | string) => {
+    const criterion = criteria.find(c => c.id === criterionId);
+    if (!criterion) return;
+
+    // Optimistic local update
+    setCriteria(prev => prev.map(c =>
+      c.id === criterionId ? { ...c, [field]: value } : c
+    ));
+
     try {
-      // Update evaluation program
-      if (evaluationProgram) {
-        await api.evaluationPrograms.update(evaluationProgram.id, {
-          organization_context: updatedProgram.organizationContext,
-          time_period: updatedProgram.timePeriod,
-          responsible_team: updatedProgram.responsibleTeam,
-        });
-        setEvaluationProgram(updatedProgram);
-      }
-
-      // Update goal
-      if (goal) {
-        await api.goals.update(goal.id, {
-          purpose: updatedGoal.purpose,
-          focus: updatedGoal.focus,
-          viewpoint: updatedGoal.viewpoint,
-          context: updatedGoal.context,
-          evaluation_program_id: updatedGoal.evaluationProgramId,
-        });
-        setGoal(updatedGoal);
-      }
-
-      // Track which criteria need recalculation
-      const criteriaToRecalculate = new Set<string>();
-
-      const updateCriterionAndMetrics = async (criterion: EvaluationCriterion): Promise<boolean> => {
-        const originalCriterion = criteria.find(c => c.id === criterion.id);
-        const criterionChanged = !!originalCriterion && (
-          originalCriterion.weight !== criterion.weight ||
-          originalCriterion.aggregationStrategy !== criterion.aggregationStrategy
-        );
-
-        await api.evaluationCriteria.update(criterion.id, {
-          dimension: criterion.dimension,
-          description: criterion.description,
-          weight: criterion.weight,
-          aggregation_strategy: criterion.aggregationStrategy,
-        });
-
-        let metricWeightChangedAffects = false;
-        for (const metric of criterion.metrics) {
-          const originalMetric = originalCriterion?.metrics.find(m => m.id === metric.id);
-          if (originalMetric && originalMetric.weight !== metric.weight &&
-              (criterion.aggregationStrategy === 'weighted_sum_normalized' ||
-               criterion.aggregationStrategy === 'direct_metric_weights' ||
-               criterion.aggregationStrategy === 'custom')) {
-            metricWeightChangedAffects = true;
-          }
-          await api.metrics.update(metric.id, {
-            name: metric.name,
-            definition: metric.definition,
-            unit: metric.unit,
-            scale_type: metric.scaleType,
-            collection_method: metric.collectionMethod,
-            normalization_method: metric.normalizationMethod || 'none',
-            weight: metric.weight,
-            target_value: metric.targetValue,
-            direction: metric.direction === 'maximize' ? 'higher_is_better' : 'lower_is_better',
-          });
-        }
-
-        return criterionChanged || metricWeightChangedAffects;
+      const updateData: any = {
+        dimension: criterion.dimension,
+        description: criterion.description,
+        weight: field === 'weight' ? value : criterion.weight,
+        aggregation_strategy: field === 'aggregationStrategy' ? value : criterion.aggregationStrategy,
       };
+      await api.evaluationCriteria.update(criterionId, updateData);
 
-      for (const criterion of updatedCriteria) {
-        const needsRecalculation = await updateCriterionAndMetrics(criterion);
-        if (needsRecalculation) criteriaToRecalculate.add(criterion.id);
-      }
-
-      // Recalculate scores for affected criteria
-      console.log('Criteria to recalculate:', criteriaToRecalculate);
-      for (const criterionId of criteriaToRecalculate) {
-        try {
-          console.log(`Recalculating criterion ${criterionId}...`);
-          const recalculatedScores = await api.aggregatedScores.recalculateForCriterion(criterionId);
-          console.log(`Recalculated ${recalculatedScores.length} scores for criterion ${criterionId}`);
-        } catch (error) {
-          console.error(`Error recalculating scores for criterion ${criterionId}:`, error);
-        }
-      }
-
-      // Update local state
-      setCriteria(updatedCriteria);
-
-      // Reload scores to reflect recalculated values
-      if (criteriaToRecalculate.size > 0) {
-        const updatedScores = await fetchAggregatedScores();
-        setScores(updatedScores);
-      }
-
-      toast({
-        title: 'Context Saved',
-        description: `The evaluation context has been updated successfully.${criteriaToRecalculate.size > 0 ? ' Scores recalculated.' : ''}`,
-      });
-      setIsEditContextSheetOpen(false);
+      // Recalculate scores
+      await api.aggregatedScores.recalculateForCriterion(criterionId);
+      const updatedScores = await fetchAggregatedScores();
+      setScores(updatedScores);
     } catch (error) {
-      console.error('Error saving context:', error);
-      let errorMessage = 'Failed to save the evaluation context. Please try again.';
-      if (error instanceof Error) {
-        errorMessage = error.message || errorMessage;
-      }
+      console.error('Error updating criterion:', error);
+      // Revert optimistic update
+      setCriteria(prev => prev.map(c =>
+        c.id === criterionId ? { ...c, [field]: field === 'weight' ? criterion.weight : criterion.aggregationStrategy } : c
+      ));
       toast({
         title: 'Error',
-        description: errorMessage,
+        description: 'Failed to update criterion.',
         variant: 'destructive',
       });
     }
+  };
+
+  const handleUpdateMetric = async (criterionId: string, metricId: string, field: 'weight', value: number) => {
+    const criterion = criteria.find(c => c.id === criterionId);
+    const metric = criterion?.metrics.find(m => m.id === metricId);
+    if (!criterion || !metric) return;
+    const originalValue = metric[field];
+
+    // Optimistic local update
+    setCriteria(prev => prev.map(c => {
+      if (c.id !== criterionId) return c;
+      return {
+        ...c,
+        metrics: c.metrics.map(m =>
+          m.id === metricId ? { ...m, [field]: value } : m
+        ),
+      };
+    }));
+
+    try {
+      await api.metrics.update(metricId, {
+        name: metric.name,
+        definition: metric.definition,
+        unit: metric.unit,
+        scale_type: metric.scaleType,
+        collection_method: metric.collectionMethod,
+        normalization_method: metric.normalizationMethod || 'none',
+        weight: value,
+        target_value: metric.targetValue,
+        direction: metric.direction === 'maximize' ? 'higher_is_better' : 'lower_is_better',
+      });
+
+      // Recalculate scores for affected criterion
+      await api.aggregatedScores.recalculateForCriterion(criterionId);
+      const updatedScores = await fetchAggregatedScores();
+      setScores(updatedScores);
+    } catch (error) {
+      console.error('Error updating metric:', error);
+      // Revert optimistic update
+      setCriteria(prev => prev.map(c => {
+        if (c.id !== criterionId) return c;
+        return {
+          ...c,
+          metrics: c.metrics.map(m =>
+            m.id === metricId ? { ...m, [field]: originalValue } : m
+          ),
+        };
+      }));
+      toast({
+        title: 'Error',
+        description: 'Failed to update metric.',
+        variant: 'destructive',
+      });
+    }
+  };
+
+  const handleEditCriterion = (criterion: EvaluationCriterion) => {
+    setEditingCriterion(criterion);
+    setIsAddCriterionDialogOpen(true);
+  };
+
+  const handleEditMetric = (metric: Metric, criterionId: string) => {
+    setEditingMetric(metric);
+    setSelectedCriterionForMetric(criterionId);
+    setIsAddMetricDialogOpen(true);
   };
 
   const handleScoreUpdate = (scoreId: string, newScore: number) => {
@@ -657,20 +644,24 @@ export function Dashboard({ goalId }: Readonly<DashboardProps>) {
       });
       return;
     }
+    setEditingCriterion(null);
     setIsAddCriterionDialogOpen(true);
   };
 
   const handleCriterionSuccess = () => {
-    loadData(); // Reload all data
+    setEditingCriterion(null);
+    loadData();
   };
 
   const handleOpenMetricDialog = (criterionId: string) => {
+    setEditingMetric(null);
     setSelectedCriterionForMetric(criterionId);
     setIsAddMetricDialogOpen(true);
   };
 
   const handleMetricSuccess = () => {
-    loadData(); // Reload all data
+    setEditingMetric(null);
+    loadData();
   };
 
   // Filter llmTools based on date range and sort by timestamp according to sortDirection
@@ -717,7 +708,6 @@ export function Dashboard({ goalId }: Readonly<DashboardProps>) {
     <div className="flex flex-col min-h-screen bg-background text-foreground">
       <Header
         onAddMeasure={() => setIsAddLlmToolDialogOpen(true)}
-        onEditContext={() => setIsEditContextSheetOpen(true)}
         onBack={goalId ? handleBackToGoals : undefined}
         onLogoClick={handleLogoHome}
         canManage={isAdmin}
@@ -747,8 +737,8 @@ export function Dashboard({ goalId }: Readonly<DashboardProps>) {
               <p className="text-muted-foreground">Loading data from backend...</p>
             </div>
           ) : (
-            <EvalTableEnhanced 
-              criteria={criteria} 
+            <EvalTableEnhanced
+              criteria={criteria}
               llmTools={filteredLlmTools}
               scores={scores}
               measurements={measurements}
@@ -757,6 +747,12 @@ export function Dashboard({ goalId }: Readonly<DashboardProps>) {
               onEditLlmTool={handleEditLlmTool}
               canEditTools={isAdmin}
               scopedToSingleGoal={Boolean(goalId)}
+              onAddCriterion={handleOpenCriterionDialog}
+              onEditCriterion={handleEditCriterion}
+              onAddMetric={handleOpenMetricDialog}
+              onEditMetric={handleEditMetric}
+              onUpdateCriterion={handleUpdateCriterion}
+              onUpdateMetric={handleUpdateMetric}
             />
           )}
         </div>
@@ -783,30 +779,27 @@ export function Dashboard({ goalId }: Readonly<DashboardProps>) {
           evaluator={user?.username || 'unknown'}
         />
       )}
-      <EditContextSheet
-        isOpen={isEditContextSheetOpen}
-        onOpenChange={setIsEditContextSheetOpen}
-        evaluationProgram={evaluationProgram}
-        goal={goal}
-        criteria={criteria}
-        onSave={handleContextSave}
-        onAddCriterion={handleOpenCriterionDialog}
-        onAddMetric={handleOpenMetricDialog}
-        canEdit={isAdmin}
-      />
       {goal && (
         <AddCriterionDialog
           open={isAddCriterionDialogOpen}
-          onOpenChange={setIsAddCriterionDialogOpen}
+          onOpenChange={(open) => {
+            setIsAddCriterionDialogOpen(open);
+            if (!open) setEditingCriterion(null);
+          }}
           goalId={goal.id}
+          criterion={editingCriterion}
           onSuccess={handleCriterionSuccess}
         />
       )}
       {selectedCriterionForMetric && (
         <AddMetricDialog
           open={isAddMetricDialogOpen}
-          onOpenChange={setIsAddMetricDialogOpen}
+          onOpenChange={(open) => {
+            setIsAddMetricDialogOpen(open);
+            if (!open) setEditingMetric(null);
+          }}
           criterionId={selectedCriterionForMetric}
+          metric={editingMetric}
           onSuccess={handleMetricSuccess}
         />
       )}

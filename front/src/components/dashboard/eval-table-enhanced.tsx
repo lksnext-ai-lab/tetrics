@@ -12,6 +12,8 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { AdminOnlyButton } from '@/components/ui/admin-only-button';
+import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import {
   DropdownMenu,
@@ -21,9 +23,9 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { Edit, ChevronDown, ChevronRight, Weight, ArrowRightLeft, Settings2, GripVertical } from 'lucide-react';
-import React, { useState, useMemo } from 'react';
-import type { Measurement as MeasurementType, EvaluationCriterion, LLMToolConfiguration, AggregatedScore, Measurement } from '@/lib/data';
+import { Edit, ChevronDown, ChevronRight, Weight, ArrowRightLeft, Settings2, GripVertical, Plus } from 'lucide-react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import type { Measurement as MeasurementType, EvaluationCriterion, LLMToolConfiguration, AggregatedScore, Measurement, Metric } from '@/lib/data';
 
 // Helper: select latest measurement by date for a metric/tool
 function selectLatestMeasurement(measurements: MeasurementType[], toolId: string, metricId: string): MeasurementType | undefined {
@@ -46,7 +48,6 @@ import {
   type ColumnOrderState,
   type VisibilityState,
 } from '@tanstack/react-table';
-// (Consolidated import above)
 
 interface EvalTableProps {
   criteria: EvaluationCriterion[];
@@ -59,6 +60,18 @@ interface EvalTableProps {
   /** If true, table is showing a single goal; overall score should be computed only from provided criteria and ignore global totalScore from backend. */
   scopedToSingleGoal?: boolean;
   canEditTools?: boolean;
+  /** Open the add criterion dialog */
+  onAddCriterion?: () => void;
+  /** Open the edit criterion dialog */
+  onEditCriterion?: (criterion: EvaluationCriterion) => void;
+  /** Open the add metric dialog for a criterion */
+  onAddMetric?: (criterionId: string) => void;
+  /** Open the edit metric dialog */
+  onEditMetric?: (metric: Metric, criterionId: string) => void;
+  /** Save a criterion field update (weight, aggregationStrategy) */
+  onUpdateCriterion?: (criterionId: string, field: 'weight' | 'aggregationStrategy', value: number | string) => void;
+  /** Save a metric field update (weight) */
+  onUpdateMetric?: (criterionId: string, metricId: string, field: 'weight', value: number) => void;
 }
 
 // Flatten structure for table rows
@@ -70,7 +83,47 @@ type TableRow = {
   criterionId?: string;
 };
 
-export function EvalTableEnhanced({ criteria, llmTools, scores, measurements, onScoreUpdate, onAddMeasurement, onEditLlmTool, scopedToSingleGoal = false, canEditTools = true }: Readonly<EvalTableProps>) {
+function InlineWeightInput({ value, onSave, className }: { value: number; onSave: (value: number) => void; className?: string }) {
+  const [localValue, setLocalValue] = useState(value.toString());
+
+  useEffect(() => {
+    setLocalValue(value.toString());
+  }, [value]);
+
+  const commit = useCallback((raw: string) => {
+    const parsed = parseFloat(raw);
+    if (!isNaN(parsed) && parsed !== value) {
+      onSave(parsed);
+    } else if (isNaN(parsed)) {
+      setLocalValue(value.toString());
+    }
+  }, [value, onSave]);
+
+  const charWidth = Math.max(localValue.length + 1, 4);
+
+  return (
+    <Input
+      type="number"
+      step="0.1"
+      className={`h-7 text-xs ${className || ''}`}
+      style={{ width: `calc(${charWidth}ch + 3rem)` }}
+      value={localValue}
+      onChange={(e) => setLocalValue(e.target.value)}
+      onBlur={() => commit(localValue)}
+      onKeyDown={(e) => { if (e.key === 'Enter') commit(localValue); }}
+      onClick={(e) => e.stopPropagation()}
+    />
+  );
+}
+
+const AGGREGATION_OPTIONS = [
+  { value: 'weighted_average', label: 'Weighted Avg' },
+  { value: 'weighted_sum_normalized', label: 'Weighted Sum Norm' },
+  { value: 'direct_metric_weights', label: 'Direct Metric' },
+  { value: 'custom', label: 'Custom' },
+];
+
+export function EvalTableEnhanced({ criteria, llmTools, scores, measurements, onScoreUpdate, onAddMeasurement, onEditLlmTool, scopedToSingleGoal = false, canEditTools = true, onAddCriterion, onEditCriterion, onAddMetric, onEditMetric, onUpdateCriterion, onUpdateMetric }: Readonly<EvalTableProps>) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>(
     criteria.reduce((acc, c) => ({ ...acc, [c.id]: true }), {} as Record<string, boolean>)
   );
@@ -83,7 +136,7 @@ export function EvalTableEnhanced({ criteria, llmTools, scores, measurements, on
   const [dragOverRow, setDragOverRow] = useState<string | null>(null);
 
   // Get aggregated score from backend for a criterion and tool configuration
-  const getAggregatedScore = (criterionId: string, toolConfigId: string): number | null => {
+  const getAggregatedScore = useCallback((criterionId: string, toolConfigId: string): number | null => {
     const score = scores.find(s => s.criterionID === criterionId && s.toolConfigID === toolConfigId);
     if (score && score.score !== 'N/A') {
       return typeof score.score === 'number' ? score.score : null;
@@ -93,7 +146,6 @@ export function EvalTableEnhanced({ criteria, llmTools, scores, measurements, on
     if (!criterion) return null;
     const relevantMeasurements = measurements.filter(m => m.llmToolConfigurationId === toolConfigId && criterion.metrics.some(mt => mt.id === m.metricId));
     if (relevantMeasurements.length === 0) return null;
-    // Map measurement by metricId for quick lookup
     const measurementMap = new Map<string, typeof relevantMeasurements[0]>();
     for (const m of relevantMeasurements) measurementMap.set(m.metricId, m);
     let weightedSum = 0;
@@ -101,7 +153,6 @@ export function EvalTableEnhanced({ criteria, llmTools, scores, measurements, on
     for (const metric of criterion.metrics) {
       const m = measurementMap.get(metric.id);
       if (!m) continue;
-      // Use normalized_value from backend if the metric uses normalization; otherwise raw value
       const value = (m.normalizedValue !== null && m.normalizedValue !== undefined)
         ? m.normalizedValue
         : m.value;
@@ -113,20 +164,17 @@ export function EvalTableEnhanced({ criteria, llmTools, scores, measurements, on
       return (weightedSum / weightTotal) * criterion.weight;
     }
     if (criterion.aggregationStrategy === 'direct_metric_weights') {
-      return weightedSum; // No criterion weight
+      return weightedSum;
     }
-    // weighted_sum_normalized: includes criterion weight
     return weightedSum * criterion.weight;
-  };
+  }, [criteria, scores, measurements]);
 
   // Calculate overall aggregated score across all criteria
-  const calculateOverallScore = (toolConfigID: string): string => {
+  const calculateOverallScore = useCallback((toolConfigID: string): string => {
     const tool = llmTools.find(t => t.id === toolConfigID);
-    // Global view: use backend totalScore if present
     if (!scopedToSingleGoal && tool?.totalScore !== null && tool?.totalScore !== undefined) {
       return tool.totalScore.toFixed(2);
     }
-    // Scoped view: sum of aggregated criterion scores (already weighted per server logic)
     let sum = 0;
     let any = false;
     for (const criterion of criteria) {
@@ -138,29 +186,27 @@ export function EvalTableEnhanced({ criteria, llmTools, scores, measurements, on
     }
     if (!any) return 'N/A';
     return sum.toFixed(2);
-  };
+  }, [criteria, llmTools, scopedToSingleGoal, getAggregatedScore]);
 
   // Flatten data structure for react-table
   const tableData = useMemo(() => {
     const rows: TableRow[] = [];
-    
-    // Use custom order if set, otherwise use original criteria order
+
     const orderedCriteria = criteriaOrder.length > 0
       ? criteriaOrder.map(id => criteria.find(c => c.id === id)).filter(Boolean) as EvaluationCriterion[]
       : criteria;
-    
+
     for (const criterion of orderedCriteria) {
       rows.push({
         id: criterion.id,
         type: 'criterion',
         criterion,
       });
-      
-      // Use custom metric order if set, otherwise use original metric order
+
       const orderedMetrics = metricOrders[criterion.id]
         ? metricOrders[criterion.id].map(metricId => criterion.metrics.find(m => m.id === metricId)).filter(Boolean) as typeof criterion.metrics
         : criterion.metrics;
-      
+
       for (const metric of orderedMetrics) {
         rows.push({
           id: `${criterion.id}-${metric.id}`,
@@ -186,25 +232,68 @@ export function EvalTableEnhanced({ criteria, llmTools, scores, measurements, on
             setExpanded(prev => ({ ...prev, [data.criterion!.id]: !prev[data.criterion!.id] }));
           };
           return (
-            <div
-              className="flex items-center gap-2 cursor-pointer font-semibold"
-              role="button"
-              tabIndex={0}
-              onClick={toggleExpanded}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault();
-                  toggleExpanded();
-                }
-              }}
-            >
-              {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-              <span>{data.criterion.dimension}</span>
+            <div className="flex items-center gap-2 font-semibold group/criterion">
+              <span
+                className="flex items-center gap-2 cursor-pointer"
+                role="button"
+                tabIndex={0}
+                onClick={toggleExpanded}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    toggleExpanded();
+                  }
+                }}
+              >
+                {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                <span>{data.criterion.dimension}</span>
+              </span>
+              {canEditTools && (
+                <div className="flex items-center gap-0.5 opacity-0 group-hover/criterion:opacity-100 transition-opacity">
+                  <AdminOnlyButton
+                    allowed={canEditTools}
+                    tooltip="Edit criterion"
+                    variant="ghost"
+                    size="icon"
+                    className="h-6 w-6"
+                    onClick={(e) => { e.stopPropagation(); onEditCriterion?.(data.criterion!); }}
+                  >
+                    <Edit className="h-3 w-3" />
+                  </AdminOnlyButton>
+                  {onAddMetric && (
+                    <AdminOnlyButton
+                      allowed={canEditTools}
+                      tooltip="Admin role required to add metrics."
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 text-xs"
+                      onClick={(e) => { e.stopPropagation(); onAddMetric(data.criterion!.id); }}
+                    >
+                      <Plus className="mr-1 h-3 w-3" />
+                      Add New Metric
+                    </AdminOnlyButton>
+                  )}
+                </div>
+              )}
             </div>
           );
         } else if (data.type === 'metric' && data.metric) {
           return (
-            <span className="font-medium">{data.metric.name}</span>
+            <div className="flex items-center gap-2 group/metric">
+              <span className="font-medium">{data.metric.name}</span>
+              {canEditTools && (
+                <AdminOnlyButton
+                  allowed={canEditTools}
+                  tooltip="Edit metric"
+                  variant="ghost"
+                  size="icon"
+                  className="h-6 w-6 opacity-0 group-hover/metric:opacity-100 transition-opacity"
+                  onClick={(e) => { e.stopPropagation(); onEditMetric?.(data.metric!, data.criterionId!); }}
+                >
+                  <Edit className="h-3 w-3" />
+                </AdminOnlyButton>
+              )}
+            </div>
           );
         }
         return null;
@@ -218,14 +307,53 @@ export function EvalTableEnhanced({ criteria, llmTools, scores, measurements, on
       cell: ({ row }) => {
         const data = row.original;
         if (data.type === 'criterion' && data.criterion) {
+          const isDirectMetric = data.criterion.aggregationStrategy === 'direct_metric_weights';
           return (
-            <div className='flex gap-4 items-center text-sm text-muted-foreground'>
-              <div className='flex items-center gap-1'><Weight className='w-4 h-4' /> {data.criterion.weight}</div>
-              <div className='flex items-center gap-1'><ArrowRightLeft className='w-4 h-4' /> {data.criterion.aggregationStrategy}</div>
+            <div className="flex gap-4 items-center text-sm text-muted-foreground">
+              {!isDirectMetric && (
+                <div className="flex items-center gap-1">
+                  <Weight className="w-4 h-4" />
+                  <InlineWeightInput
+                    value={data.criterion.weight}
+                    onSave={(newWeight) => onUpdateCriterion?.(data.criterion!.id, 'weight', newWeight)}
+                  />
+                </div>
+              )}
+              <div className="flex items-center gap-1">
+                <ArrowRightLeft className="w-4 h-4" />
+                <Select
+                  value={data.criterion.aggregationStrategy}
+                  onValueChange={(v) => onUpdateCriterion?.(data.criterion!.id, 'aggregationStrategy', v)}
+                >
+                  <SelectTrigger className="h-7 w-[150px] text-xs" onClick={(e) => e.stopPropagation()}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {AGGREGATION_OPTIONS.map(opt => (
+                      <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
           );
         } else if (data.type === 'metric' && data.metric) {
-          return <span className="text-sm text-muted-foreground">{data.metric.definition}</span>;
+          const criterion = criteria.find(c => c.id === data.criterionId);
+          const isDirectMetric = criterion?.aggregationStrategy === 'direct_metric_weights';
+          return (
+            <div className="flex gap-4 items-center text-sm text-muted-foreground">
+              <span className="truncate max-w-[200px]">{data.metric.definition}</span>
+              {isDirectMetric && (
+                <div className="flex items-center gap-1 shrink-0">
+                  <Weight className="w-4 h-4" />
+                  <InlineWeightInput
+                    value={data.metric.weight}
+                    onSave={(newWeight) => onUpdateMetric?.(data.criterionId!, data.metric!.id, 'weight', newWeight)}
+                  />
+                </div>
+              )}
+            </div>
+          );
         }
         return null;
       },
@@ -236,20 +364,20 @@ export function EvalTableEnhanced({ criteria, llmTools, scores, measurements, on
       header: () => (
         <div className="w-full flex flex-col items-center justify-start gap-0.5 group/header relative text-center pt-2 pb-3">
           <Badge variant="default" className="mx-auto text-xs font-medium px-1 py-0.5 bg-accent text-accent-foreground">
-            {new Date(tool.timestamp).toLocaleDateString('en-US', { 
-              year: 'numeric', 
-              month: 'short', 
-              day: 'numeric' 
+            {new Date(tool.timestamp).toLocaleDateString('en-US', {
+              year: 'numeric',
+              month: 'short',
+              day: 'numeric'
             })}
           </Badge>
           <span className="text-xl font-bold">{tool.toolName}</span>
           <span className="text-sm font-normal text-muted-foreground">{tool.modelVersion}</span>
           <span className="inline-flex h-6 w-6 absolute -top-1 -right-1 opacity-0 group-hover/header:opacity-100">
-            <AdminOnlyButton 
+            <AdminOnlyButton
               allowed={canEditTools}
               tooltip="Admin role required to edit LLM tools."
-              variant="ghost" 
-              size="icon" 
+              variant="ghost"
+              size="icon"
               className="h-6 w-6"
               onClick={() => onEditLlmTool(tool)}
             >
@@ -277,24 +405,28 @@ export function EvalTableEnhanced({ criteria, llmTools, scores, measurements, on
           const measurement = selectLatestMeasurement(measurements, tool.id, data.metric!.id);
           const isPercent = data.metric.unit === 'Percent';
           return (
-            <div className="text-center tabular-nums group/cell relative">
-              {measurement ? (
-                <Badge variant="secondary" className="text-base">
-                  {measurement.value}{isPercent ? '%' : ''}
-                </Badge>
-              ) : (
-                <span className="text-muted-foreground">-</span>
-              )}
-              <Button 
-                variant="ghost" 
-                size="icon" 
-                className='h-6 w-6 opacity-0 group-hover/cell:opacity-100 absolute right-2 top-1/2 -translate-y-1/2' 
-                onClick={() => {
-                  onAddMeasurement(tool.id, data.metric!.id, data.metric!.name, tool.toolName, measurement);
-                }}
-              >
-                <Edit className="h-3 w-3" />
-              </Button>
+            <div className="relative flex items-center justify-center group/cell">
+              <div className="flex items-center justify-center">
+                {measurement ? (
+                  <Badge variant="secondary" className="text-base">
+                    {measurement.value}{isPercent ? '%' : ''}
+                  </Badge>
+                ) : (
+                  <span className="text-muted-foreground">-</span>
+                )}
+              </div>
+              <div className="absolute inset-y-0 right-0 flex items-center opacity-0 group-hover/cell:opacity-100 transition-opacity">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-6 w-6"
+                  onClick={() => {
+                    onAddMeasurement(tool.id, data.metric!.id, data.metric!.name, tool.toolName, measurement);
+                  }}
+                >
+                  <Edit className="h-3 w-3" />
+                </Button>
+              </div>
             </div>
           );
         }
@@ -306,7 +438,7 @@ export function EvalTableEnhanced({ criteria, llmTools, scores, measurements, on
         modelVersion: tool.modelVersion,
       },
     })),
-  ], [llmTools, expanded, scores, measurements, onAddMeasurement, onEditLlmTool, canEditTools]);
+  ], [llmTools, expanded, scores, measurements, onAddMeasurement, onEditLlmTool, canEditTools, criteria, onEditCriterion, onAddMetric, onEditMetric, onUpdateCriterion, onUpdateMetric, getAggregatedScore]);
 
   const table = useReactTable({
     data: tableData,
@@ -362,7 +494,7 @@ export function EvalTableEnhanced({ criteria, llmTools, scores, measurements, on
 
   // Handle row drag and drop (for both criteria and metrics)
   const [dropPosition, setDropPosition] = useState<'before' | 'after'>('before');
-  
+
   const handleRowDragStart = (rowId: string) => {
     setDraggedRow(rowId);
   };
@@ -370,8 +502,7 @@ export function EvalTableEnhanced({ criteria, llmTools, scores, measurements, on
   const handleRowDragOver = (e: React.DragEvent, rowId: string, element: HTMLElement) => {
     e.preventDefault();
     setDragOverRow(rowId);
-    
-    // Determine if we should insert before or after based on cursor position
+
     const rect = element.getBoundingClientRect();
     const midpoint = rect.top + rect.height / 2;
     setDropPosition(e.clientY < midpoint ? 'before' : 'after');
@@ -388,11 +519,9 @@ export function EvalTableEnhanced({ criteria, llmTools, scores, measurements, on
       return;
     }
 
-    // Determine if dragged item is a criterion or metric
     const draggedIsCriterion = criteria.some(c => c.id === draggedRow);
     const targetIsCriterion = targetType === 'criterion';
 
-    // Case 1: Both are criteria - reorder criteria
     if (draggedIsCriterion && targetIsCriterion) {
       const currentOrder = criteriaOrder.length > 0 ? criteriaOrder : criteria.map(c => c.id);
       const draggedIndex = currentOrder.indexOf(draggedRow);
@@ -400,49 +529,36 @@ export function EvalTableEnhanced({ criteria, llmTools, scores, measurements, on
 
       if (draggedIndex !== -1 && targetIndex !== -1 && draggedIndex !== targetIndex) {
         const newOrder = [...currentOrder];
-        // Remove the dragged item from its current position
         const [removed] = newOrder.splice(draggedIndex, 1);
-        
-        // Calculate insert position
-        // After removing, indices shift. We need to account for:
-        // 1. Whether we're moving up (draggedIndex > targetIndex) or down (draggedIndex < targetIndex)
-        // 2. Whether we're dropping before or after the target
+
         let insertIndex;
-        
+
         if (draggedIndex < targetIndex) {
-          // Moving down: removal shifts all subsequent indices left by 1
           insertIndex = dropPosition === 'before' ? targetIndex - 1 : targetIndex;
         } else {
-          // Moving up: removal doesn't affect target index
           insertIndex = dropPosition === 'before' ? targetIndex : targetIndex + 1;
         }
-        
+
         newOrder.splice(insertIndex, 0, removed);
         setCriteriaOrder(newOrder);
       }
     }
-    // Case 2: Both are metrics within the same criterion - reorder metrics
     else if (!draggedIsCriterion && !targetIsCriterion && targetCriterionId) {
-      // Find the metric IDs by parsing the composite row IDs
-      // Row ID format is: `${criterionId}-${metricId}`
-      // We need to find the metric by looking at the data
       const findMetricIdFromRowId = (rowId: string, criterionId: string) => {
         const criterion = criteria.find(c => c.id === criterionId);
         if (!criterion) return null;
-        
-        // The rowId format is `criterionId-metricId`, so we remove the criterionId prefix
+
         const prefix = `${criterionId}-`;
         if (rowId.startsWith(prefix)) {
           return rowId.substring(prefix.length);
         }
         return null;
       };
-      
+
       const draggedCriterionId = tableData.find(r => r.id === draggedRow)?.criterionId;
       const draggedMetricId = findMetricIdFromRowId(draggedRow, draggedCriterionId || '');
       const targetMetricId = findMetricIdFromRowId(targetRowId, targetCriterionId);
-      
-      // Only allow reordering within the same criterion
+
       if (draggedCriterionId === targetCriterionId && draggedMetricId && targetMetricId) {
         const criterion = criteria.find(c => c.id === targetCriterionId);
         if (criterion) {
@@ -452,23 +568,16 @@ export function EvalTableEnhanced({ criteria, llmTools, scores, measurements, on
 
           if (draggedIndex !== -1 && targetIndex !== -1 && draggedIndex !== targetIndex) {
             const newOrder = [...currentOrder];
-            // Remove the dragged item from its current position
             const [removed] = newOrder.splice(draggedIndex, 1);
-            
-            // Calculate insert position
-            // After removing, indices shift. We need to account for:
-            // 1. Whether we're moving up (draggedIndex > targetIndex) or down (draggedIndex < targetIndex)
-            // 2. Whether we're dropping before or after the target
+
             let insertIndex;
-            
+
             if (draggedIndex < targetIndex) {
-              // Moving down: removal shifts all subsequent indices left by 1
               insertIndex = dropPosition === 'before' ? targetIndex - 1 : targetIndex;
             } else {
-              // Moving up: removal doesn't affect target index
               insertIndex = dropPosition === 'before' ? targetIndex : targetIndex + 1;
             }
-            
+
             newOrder.splice(insertIndex, 0, removed);
 
             setMetricOrders(prev => ({
@@ -509,10 +618,10 @@ export function EvalTableEnhanced({ criteria, llmTools, scores, measurements, on
                 .filter((column) => column.getCanHide())
                 .map((column) => {
                   const meta = column.columnDef.meta as any;
-                  const label = meta?.toolName 
+                  const label = meta?.toolName
                     ? `${meta.toolName} (${meta.modelVersion})`
                     : column.id;
-                  
+
                   return (
                     <DropdownMenuCheckboxItem
                       key={column.id}
@@ -575,9 +684,9 @@ export function EvalTableEnhanced({ criteria, llmTools, scores, measurements, on
                 const criterionId = isCriterion ? data.criterion?.id : data.criterionId;
                 const isDragging = draggedRow === rowId;
                 const isDragOver = dragOverRow === rowId;
-                
+
                 return (
-                  <TableRow 
+                  <TableRow
                     key={row.id}
                     className={`
                       ${isCriterion ? 'bg-muted/20 hover:bg-muted/40 font-semibold' : 'hover:bg-muted/10'}
@@ -600,7 +709,7 @@ export function EvalTableEnhanced({ criteria, llmTools, scores, measurements, on
                     {row.getVisibleCells().map((cell, cellIndex) => {
                       const isColumnBeingDragged = draggedColumn === cell.column.id;
                       return (
-                      <TableCell 
+                      <TableCell
                         key={cell.id}
                         className={`
                           ${cell.column.id === 'criterion-metric' ? '' : 'align-middle'}
@@ -637,7 +746,6 @@ export function EvalTableEnhanced({ criteria, llmTools, scores, measurements, on
                   onDragLeave={handleRowDragLeave}
                   onDrop={() => {
                     if (draggedRow && criteria.some(c => c.id === draggedRow)) {
-                      // Get the last criterion in current order
                       const currentOrder = criteriaOrder.length > 0 ? criteriaOrder : criteria.map(c => c.id);
                       const lastCriterionId = currentOrder.at(-1);
                       if (lastCriterionId) {
@@ -651,13 +759,31 @@ export function EvalTableEnhanced({ criteria, llmTools, scores, measurements, on
                   </TableCell>
                 </TableRow>
               )}
+              {/* Add Criterion button row */}
+              {canEditTools && onAddCriterion && (
+                <TableRow className="hover:bg-muted/10">
+                  <TableCell colSpan={table.getAllColumns().length} className="text-center py-3">
+                    <AdminOnlyButton
+                      allowed={canEditTools}
+                      tooltip="Admin role required to add criteria."
+                      variant="ghost"
+                      size="sm"
+                      onClick={onAddCriterion}
+                      className="text-muted-foreground hover:text-foreground"
+                    >
+                      <Plus className="mr-2 h-4 w-4" />
+                      Add Criterion
+                    </AdminOnlyButton>
+                  </TableCell>
+                </TableRow>
+              )}
             </TableBody>
             <TableFooter>
               <TableRow className="bg-muted/50 font-bold text-base">
                 <TableCell colSpan={2}>Overall Score</TableCell>
                 {table.getHeaderGroups()[0].headers.slice(2).map((header) => {
                   if (!header.column.getIsVisible()) return null;
-                  
+
                   const tool = llmTools.find(t => t.id === header.column.id);
                   if (!tool) return null;
 
@@ -665,8 +791,8 @@ export function EvalTableEnhanced({ criteria, llmTools, scores, measurements, on
                   const isColumnBeingDragged = draggedColumn === header.column.id;
 
                   return (
-                    <TableCell 
-                      key={header.id} 
+                    <TableCell
+                      key={header.id}
                       className={`text-center align-middle ${isColumnBeingDragged ? 'opacity-50 bg-primary/10' : ''}`}
                     >
                       {overallScore === 'N/A' ? (
