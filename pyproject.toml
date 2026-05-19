@@ -36,6 +36,9 @@ dependencies = [
 [tool.poetry]
 package-mode = false
 
+[tool.poetry.scripts]
+tetrics = "cli:app"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0.0",

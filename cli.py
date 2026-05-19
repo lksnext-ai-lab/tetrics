@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
 Tetrics CLI — manage your evaluation framework from the terminal.
 
