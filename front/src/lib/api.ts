@@ -179,7 +179,7 @@ export interface EvaluationCriterionRead {
   dimension: string;
   description: string;
   weight: number;
-  aggregation_strategy: 'weighted_average' | 'weighted_sum_normalized' | 'custom';
+  aggregation_strategy: 'weighted_average' | 'weighted_sum_normalized' | 'direct_metric_weights' | 'custom';
   goal_id: string;
   created_at: string;
   updated_at: string;
@@ -192,6 +192,7 @@ export interface MetricRead {
   unit: string;
   scale_type: 'nominal' | 'ordinal' | 'interval' | 'ratio';
   collection_method: 'automated' | 'manual' | 'hybrid';
+  normalization_method: 'none' | 'max' | 'min';
   weight: number;
   target_value: number | null;
   direction: 'higher_is_better' | 'lower_is_better' | 'target_value';

@@ -9,7 +9,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import BaseModel
 from app.models.domain.constants import CASCADE_DELETE_ORPHAN
-from app.models.domain.enums import MetricUnit, ScaleType, CollectionMethod, Direction
+from app.models.domain.enums import MetricUnit, NormalizationMethod, ScaleType, CollectionMethod, Direction
 
 if TYPE_CHECKING:
     from app.models.domain.evaluation_criterion import EvaluationCriterion
@@ -27,6 +27,9 @@ class Metric(BaseModel):
     unit: Mapped[MetricUnit] = mapped_column(String(20), nullable=False)
     scale_type: Mapped[ScaleType] = mapped_column(String(20), nullable=False)
     collection_method: Mapped[CollectionMethod] = mapped_column(String(20), nullable=False)
+    normalization_method: Mapped[NormalizationMethod] = mapped_column(
+        String(20), nullable=False, default=NormalizationMethod.NONE
+    )
     weight: Mapped[float] = mapped_column(Float, nullable=False, default=1.0)
     target_value: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     direction: Mapped[Direction] = mapped_column(String(20), nullable=False)

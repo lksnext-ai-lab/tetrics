@@ -134,10 +134,12 @@ export function EditContextSheet({
   const aggregationOptions = [
     'weighted_average',
     'weighted_sum_normalized',
+    'direct_metric_weights',
     'custom',
   ];
 
   const scaleTypeOptions = ['nominal', 'ordinal', 'interval', 'ratio'];
+  const normalizationOptions = ['none', 'max', 'min'];
 
   const directionOptions = ['maximize', 'minimize'];
   const unitOptions = ['Percent', 'Cardinal'];
@@ -319,62 +321,96 @@ export function EditContextSheet({
                           <div className="w-1 bg-primary-500 rounded-l-md mr-3" />
                           <div className="flex-1 space-y-2 border p-3 rounded-md bg-white dark:bg-gray-800 shadow-sm">
                             <Label className="font-medium">{metric.name}</Label>
-                             <Textarea 
-                               value={metric.definition} 
+                             <Textarea
+                               value={metric.definition}
                                onChange={(e) => updateMetric(criterion.id, metric.id, 'definition', e.target.value)}
                                rows={2}
                              />
-                           <div className="grid grid-cols-2 gap-4">
+                           {/* Field grid: small labels above each control */}
+                           <div className="grid grid-cols-2 gap-3">
                               <div>
+                                <p className="text-[10px] text-muted-foreground mb-0.5">Unit</p>
                                 <Select
                                   value={metric.unit}
                                   onValueChange={(v) => updateMetric(criterion.id, metric.id, 'unit', v)}
                                 >
-                                  <SelectTrigger className="w-full">
+                                  <SelectTrigger className="w-full h-8 text-xs">
                                     <SelectValue />
                                   </SelectTrigger>
                                   <SelectContent>
-                                    {unitOptions.map(u => (
-                                      <SelectItem key={u} value={u}>{u}</SelectItem>
-                                    ))}
+                                    <SelectItem value="Percent">Percentage (e.g., 85%)</SelectItem>
+                                    <SelectItem value="Cardinal">Count (e.g., 3 errors)</SelectItem>
                                   </SelectContent>
                                 </Select>
                               </div>
-                                <div>
-                                  <Select
-                                    value={metric.scaleType}
-                                    onValueChange={(v) => updateMetric(criterion.id, metric.id, 'scaleType', v)}
-                                  >
-                                    <SelectTrigger className="w-full">
-                                      <SelectValue />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                      {scaleTypeOptions.map(s => (
-                                        <SelectItem key={s} value={s}>{s}</SelectItem>
-                                      ))}
-                                    </SelectContent>
-                                  </Select>
-                                </div>
-                              <Input 
-                                placeholder="Target" 
-                                type="number"
-                                value={Number.isNaN(metric.targetValue) ? '' : metric.targetValue} 
-                                onChange={(e) => updateMetric(criterion.id, metric.id, 'targetValue', Number.parseFloat(e.target.value))}
-                              />
                               <div>
+                                <p className="text-[10px] text-muted-foreground mb-0.5">Normalize</p>
+                                <Select
+                                  value={metric.normalizationMethod}
+                                  onValueChange={(v) => updateMetric(criterion.id, metric.id, 'normalizationMethod', v)}
+                                >
+                                  <SelectTrigger className="w-full h-8 text-xs">
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="none">None (raw value)</SelectItem>
+                                    <SelectItem value="max">Max (value ÷ max)</SelectItem>
+                                    <SelectItem value="min">Min (value ÷ min)</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                              <div>
+                                <p className="text-[10px] text-muted-foreground mb-0.5">Scale</p>
+                                <Select
+                                  value={metric.scaleType}
+                                  onValueChange={(v) => updateMetric(criterion.id, metric.id, 'scaleType', v)}
+                                >
+                                  <SelectTrigger className="w-full h-8 text-xs">
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="ratio">Ratio (zero=absence)</SelectItem>
+                                    <SelectItem value="interval">Interval</SelectItem>
+                                    <SelectItem value="ordinal">Ordinal (rank)</SelectItem>
+                                    <SelectItem value="nominal">Nominal (category)</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                              <div>
+                                <p className="text-[10px] text-muted-foreground mb-0.5">Target</p>
+                                <Input
+                                  placeholder="Optional"
+                                  className="h-8 text-xs"
+                                  type="number"
+                                  value={Number.isNaN(metric.targetValue) ? '' : metric.targetValue}
+                                  onChange={(e) => updateMetric(criterion.id, metric.id, 'targetValue', Number.parseFloat(e.target.value))}
+                                />
+                              </div>
+                              <div>
+                                <p className="text-[10px] text-muted-foreground mb-0.5">Goal</p>
                                 <Select
                                   value={metric.direction}
                                   onValueChange={(v) => updateMetric(criterion.id, metric.id, 'direction', v)}
                                 >
-                                  <SelectTrigger className="w-full">
+                                  <SelectTrigger className="w-full h-8 text-xs">
                                     <SelectValue />
                                   </SelectTrigger>
                                   <SelectContent>
-                                    {directionOptions.map(d => (
-                                      <SelectItem key={d} value={d}>{d}</SelectItem>
-                                    ))}
+                                    <SelectItem value="maximize">Higher is better</SelectItem>
+                                    <SelectItem value="minimize">Lower is better</SelectItem>
                                   </SelectContent>
                                 </Select>
+                              </div>
+                              <div>
+                                <p className="text-[10px] text-muted-foreground mb-0.5">Weight</p>
+                                <Input
+                                  placeholder="1.0"
+                                  className="h-8 text-xs"
+                                  type="number"
+                                  step="0.1"
+                                  value={Number.isNaN(metric.weight) ? '' : metric.weight}
+                                  onChange={(e) => updateMetric(criterion.id, metric.id, 'weight', Number.parseFloat(e.target.value))}
+                                />
                               </div>
                   </div>
                   </div>

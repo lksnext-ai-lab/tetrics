@@ -30,7 +30,15 @@ class AggregationStrategy(str, Enum):
     """Strategy for aggregating metrics into criterion scores."""
     WEIGHTED_AVERAGE = "weighted_average"  # Standard: avg(metrics) * criterion_weight
     WEIGHTED_SUM_NORMALIZED = "weighted_sum_normalized"  # Each metric weight * normalized value
+    DIRECT_METRIC_WEIGHTS = "direct_metric_weights"  # Metric weights flow directly, criterion weight bypassed
     CUSTOM = "custom"  # Custom aggregation logic
+
+
+class NormalizationMethod(str, Enum):
+    """Method for normalizing metric measurement values before aggregation."""
+    NONE = "none"  # Raw value, no normalization
+    MAX = "max"    # value / max(all active measurements for this metric)
+    MIN = "min"    # value / min(all active measurements for this metric)
 
 
 class MetricUnit(str, Enum):

@@ -33,46 +33,51 @@ class MeasurementRepository(BaseRepository[Measurement]):
     ) -> Measurement:
         """
         Create a new measurement with optional auto score calculation.
-        
+
         When a new measurement is created:
-        - If it's a cardinal metric and sets a new max value, recalculates all scores for the criterion
+        - If normalization_method is 'max' and sets a new max, recalculates all scores
+        - If normalization_method is 'min' and sets a new min, recalculates all scores
         - Otherwise, recalculates only the affected aggregated score
-        
+
         Args:
             schema: Measurement creation data
             auto_calculate_score: Whether to automatically recalculate scores
-            
+
         Returns:
             Created measurement
         """
-        # Capture previous max for cardinal metrics
+        # Capture previous min/max for metrics that normalize by them
         metric_id = schema.metric_id
         metric = self.db.query(Metric).filter(Metric.id == metric_id).first()
+        previous_min = None
         previous_max = None
-        is_cardinal = False
-        
+        norm_method = None
+
         if metric:
-            unit_value = metric.unit if isinstance(metric.unit, str) else metric.unit.value
-            is_cardinal = unit_value.lower() == "cardinal"
-            
-            if is_cardinal:
-                previous_max = self.db.query(func.max(Measurement.value)).filter(
+            norm_method = self._get_norm_method(metric)
+            if norm_method in ('max', 'min'):
+                result = self.db.query(
+                    func.min(Measurement.value),
+                    func.max(Measurement.value)
+                ).filter(
                     Measurement.metric_id == metric_id,
                     Measurement.is_active == True
-                ).scalar()
-        
+                ).first()
+                previous_min = result[0]
+                previous_max = result[1]
+
         # Create the measurement
         db_obj = Measurement(**schema.model_dump())
         self.db.add(db_obj)
         self.db.commit()
         self.db.refresh(db_obj)
-        
+
         # Handle score recalculation
         if auto_calculate_score:
             self._handle_score_recalculation(
-                db_obj, metric, is_cardinal, previous_max
+                db_obj, metric, norm_method, previous_min, previous_max
             )
-        
+
         return db_obj
     
     def get_by_id(self, id: UUID) -> Optional[Measurement]:
@@ -156,31 +161,35 @@ class MeasurementRepository(BaseRepository[Measurement]):
         if not db_obj:
             return None
         
-        # Capture previous max for cardinal metrics before update
+        # Capture previous min/max for metrics that normalize by them
         metric = self.db.query(Metric).filter(Metric.id == db_obj.metric_id).first()
+        previous_min = None
         previous_max = None
-        is_cardinal = False
-        
+        norm_method = None
+
         if metric:
-            unit_value = metric.unit if isinstance(metric.unit, str) else metric.unit.value
-            is_cardinal = unit_value.lower() == "cardinal"
-            
-            if is_cardinal:
-                previous_max = self.db.query(func.max(Measurement.value)).filter(
+            norm_method = self._get_norm_method(metric)
+            if norm_method in ('max', 'min'):
+                result = self.db.query(
+                    func.min(Measurement.value),
+                    func.max(Measurement.value)
+                ).filter(
                     Measurement.metric_id == metric.id,
                     Measurement.is_active == True
-                ).scalar()
-        
+                ).first()
+                previous_min = result[0]
+                previous_max = result[1]
+
         # Update the measurement
         updated_measurement = super().update(db_obj, schema)
-        
+
         if not updated_measurement:
             return None
-        
+
         # Handle score recalculation
         if auto_calculate_score:
             self._handle_score_recalculation(
-                updated_measurement, metric, is_cardinal, previous_max
+                updated_measurement, metric, norm_method, previous_min, previous_max
             )
         
         return updated_measurement
@@ -248,78 +257,92 @@ class MeasurementRepository(BaseRepository[Measurement]):
     # Private Helper Methods
     # =========================================================================
     
+    def _get_norm_method(self, metric: Metric) -> Optional[str]:
+        """Extract normalization method as a plain string."""
+        if hasattr(metric.normalization_method, 'value'):
+            return metric.normalization_method.value
+        return str(metric.normalization_method) if metric.normalization_method else None
+
     def _handle_score_recalculation(
         self,
         measurement: Measurement,
         metric: Optional[Metric],
-        is_cardinal: bool,
+        norm_method: Optional[str],
+        previous_min: Optional[float],
         previous_max: Optional[float]
     ) -> None:
         """
         Handle score recalculation logic after measurement creation/update.
-        
+
         Strategy:
-        - For cardinal metrics with new max value: recalculate all scores for the criterion
-        - For other cases: recalculate only the affected score
-        
-        Args:
-            measurement: The created/updated measurement
-            metric: Associated metric (if found)
-            is_cardinal: Whether the metric is cardinal
-            previous_max: Previous maximum value for cardinal metrics
+        - For max-normalized metrics with new max: recalculate all criterion scores
+        - For min-normalized metrics with new min: recalculate all criterion scores
+        - Otherwise: recalculate only the affected score
         """
         if not metric:
             return
-        
+
         performed_full_recalc = False
-        
-        # Check if we need full recalculation (new max for cardinal metric)
-        if is_cardinal and self._is_new_maximum(measurement.value, previous_max):
+
+        if norm_method == 'max' and self._is_new_extreme(measurement.value, previous_max, 'max'):
             performed_full_recalc = self._recalculate_all_scores_for_criterion(
                 metric.evaluation_criterion_id,
                 metric.id,
-                measurement.value
+                measurement.value,
+                'max'
             )
-        
-        # If not full recalc, recalc only affected score
+        elif norm_method == 'min' and self._is_new_extreme(measurement.value, previous_min, 'min'):
+            performed_full_recalc = self._recalculate_all_scores_for_criterion(
+                metric.evaluation_criterion_id,
+                metric.id,
+                measurement.value,
+                'min'
+            )
+
         if not performed_full_recalc:
             self._recalculate_single_score(measurement, metric)
-    
-    def _is_new_maximum(
+
+    def _is_new_extreme(
         self,
         current_value: float,
-        previous_max: Optional[float]
+        previous_extreme: Optional[float],
+        extreme_type: str
     ) -> bool:
-        """Check if current value is a new maximum."""
-        return previous_max is None or current_value > (previous_max or 0)
-    
+        """Check if current value sets a new extreme (max or min)."""
+        if previous_extreme is None:
+            return True
+        if extreme_type == 'max':
+            return current_value > previous_extreme
+        return current_value < previous_extreme
+
     def _recalculate_all_scores_for_criterion(
         self,
         criterion_id: UUID,
         metric_id: UUID,
-        new_max_value: float
+        new_extreme_value: float,
+        extreme_type: str = 'max'
     ) -> bool:
         """
         Recalculate all scores for a criterion (full recalculation).
-        
+
         Returns:
             True if successful, False otherwise
         """
         try:
             from app.services.score_aggregation import ScoreAggregationService
-            
+
             aggregation_service = ScoreAggregationService(self.db)
             print(
-                f"[AUTO-CALC] New max value {new_max_value} for metric {metric_id}; "
+                f"[AUTO-CALC] New {extreme_type} value {new_extreme_value} for metric {metric_id}; "
                 f"full recalculation for criterion {criterion_id}"
             )
             recalculated_scores = aggregation_service.recalculate_all_scores_for_criterion(criterion_id)
-            
+
             # Update total scores for all affected tool configurations
             affected_tool_configs = {score.tool_config_id for score in recalculated_scores}
             for tool_config_id in affected_tool_configs:
                 aggregation_service.calculate_and_update_tool_total_score(tool_config_id)
-            
+
             return True
         except Exception as e:
             print(f"[AUTO-CALC] Error during full recalculation: {e}")

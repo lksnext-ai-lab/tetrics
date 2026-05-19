@@ -9,6 +9,7 @@ from app.models.domain.enums import (
     Direction,
     AggregationStrategy,
     MetricUnit,
+    NormalizationMethod,
 )
 from app.models.domain.evaluation_program import EvaluationProgram
 from app.models.domain.goal import Goal
@@ -25,6 +26,7 @@ __all__ = [
     "Direction",
     "AggregationStrategy",
     "MetricUnit",
+    "NormalizationMethod",
     # Models
     "EvaluationProgram",
     "Goal",

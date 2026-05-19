@@ -8,7 +8,7 @@ from uuid import UUID
 
 from pydantic import Field
 
-from app.models.domain import CollectionMethod, Direction, MetricUnit, ScaleType
+from app.models.domain import CollectionMethod, Direction, MetricUnit, NormalizationMethod, ScaleType
 from app.schemas.base import BaseCreateSchema, BaseResponseSchema, BaseSchema, BaseUpdateSchema
 
 
@@ -37,6 +37,10 @@ class MetricBase(BaseSchema):
     collection_method: CollectionMethod = Field(
         ...,
         description="How the metric data is collected (automated, manual, hybrid)"
+    )
+    normalization_method: NormalizationMethod = Field(
+        default=NormalizationMethod.NONE,
+        description="Normalization method for measurement values (none, max, min)"
     )
     weight: float = Field(
         default=1.0,
@@ -86,6 +90,10 @@ class MetricUpdate(BaseUpdateSchema):
     collection_method: Optional[CollectionMethod] = Field(
         None,
         description="How the metric data is collected"
+    )
+    normalization_method: Optional[NormalizationMethod] = Field(
+        None,
+        description="Normalization method for measurement values"
     )
     weight: Optional[float] = Field(
         None,

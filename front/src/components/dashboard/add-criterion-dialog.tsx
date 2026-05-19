@@ -32,7 +32,7 @@ export function AddCriterionDialog({
   const [dimension, setDimension] = useState('');
   const [description, setDescription] = useState('');
   const [weight, setWeight] = useState('1.0');
-  const [aggregationStrategy, setAggregationStrategy] = useState<'weighted_average' | 'weighted_sum_normalized' | 'custom'>('weighted_average');
+  const [aggregationStrategy, setAggregationStrategy] = useState<'weighted_average' | 'weighted_sum_normalized' | 'direct_metric_weights' | 'custom'>('weighted_average');
 
   useEffect(() => {
     if (criterion) {
@@ -176,6 +176,7 @@ export function AddCriterionDialog({
                 <SelectContent>
                   <SelectItem value="weighted_average">Weighted Average</SelectItem>
                   <SelectItem value="weighted_sum_normalized">Weighted Sum Normalized</SelectItem>
+                  <SelectItem value="direct_metric_weights">Direct Metric Weights</SelectItem>
                   <SelectItem value="custom">Custom</SelectItem>
                 </SelectContent>
               </Select>

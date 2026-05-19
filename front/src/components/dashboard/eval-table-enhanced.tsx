@@ -88,7 +88,7 @@ export function EvalTableEnhanced({ criteria, llmTools, scores, measurements, on
     if (score && score.score !== 'N/A') {
       return typeof score.score === 'number' ? score.score : null;
     }
-    // Fallback: compute client-side if missing from backend (only for weighted strategies)
+    // Fallback: compute client-side if missing from backend
     const criterion = criteria.find(c => c.id === criterionId);
     if (!criterion) return null;
     const relevantMeasurements = measurements.filter(m => m.llmToolConfigurationId === toolConfigId && criterion.metrics.some(mt => mt.id === m.metricId));
@@ -101,18 +101,22 @@ export function EvalTableEnhanced({ criteria, llmTools, scores, measurements, on
     for (const metric of criterion.metrics) {
       const m = measurementMap.get(metric.id);
       if (!m) continue;
-      // Prefer normalized_value if present for 'weighted_sum_normalized'
-      const raw = (criterion.aggregationStrategy === 'weighted_sum_normalized' && m.normalizedValue !== null && m.normalizedValue !== undefined)
-        ? m.normalizedValue!
+      // Use normalized_value from backend if the metric uses normalization; otherwise raw value
+      const value = (m.normalizedValue !== null && m.normalizedValue !== undefined)
+        ? m.normalizedValue
         : m.value;
-      weightedSum += raw * metric.weight;
+      weightedSum += value * metric.weight;
       weightTotal += metric.weight;
     }
     if (weightTotal === 0) return null;
-    const computed = criterion.aggregationStrategy === 'weighted_average'
-      ? weightedSum / weightTotal
-      : weightedSum; // For weighted_sum_normalized assume weights sum to 1 or leave as is
-    return computed;
+    if (criterion.aggregationStrategy === 'weighted_average') {
+      return (weightedSum / weightTotal) * criterion.weight;
+    }
+    if (criterion.aggregationStrategy === 'direct_metric_weights') {
+      return weightedSum; // No criterion weight
+    }
+    // weighted_sum_normalized: includes criterion weight
+    return weightedSum * criterion.weight;
   };
 
   // Calculate overall aggregated score across all criteria

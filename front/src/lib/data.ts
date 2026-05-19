@@ -36,7 +36,7 @@ export type EvaluationCriterion = {
   dimension: string;
   description: string;
   weight: number;
-  aggregationStrategy: 'weighted_average' | 'weighted_sum_normalized' | 'custom';
+  aggregationStrategy: 'weighted_average' | 'weighted_sum_normalized' | 'direct_metric_weights' | 'custom';
   goalId: string;
   metrics: Metric[];
 };
@@ -48,6 +48,7 @@ export type Metric = {
   unit: string;
   scaleType: 'nominal' | 'ordinal' | 'interval' | 'ratio';
   collectionMethod: string;
+  normalizationMethod: 'none' | 'max' | 'min';
   weight: number;
   targetValue: number;
   direction: 'maximize' | 'minimize';
@@ -120,6 +121,7 @@ export function adaptMetricToFrontend(metric: MetricRead): Metric {
     unit: metric.unit,
     scaleType: metric.scale_type,
     collectionMethod: metric.collection_method,
+    normalizationMethod: metric.normalization_method || 'none',
     weight: metric.weight,
     targetValue: metric.target_value || 0,
     direction: metric.direction === 'higher_is_better' ? 'maximize' : 'minimize',
@@ -135,7 +137,7 @@ export function adaptCriterionToFrontend(
     dimension: criterion.dimension,
     description: criterion.description,
     weight: criterion.weight,
-    aggregationStrategy: criterion.aggregation_strategy as 'weighted_average' | 'weighted_sum_normalized' | 'custom',
+    aggregationStrategy: criterion.aggregation_strategy as 'weighted_average' | 'weighted_sum_normalized' | 'direct_metric_weights' | 'custom',
     goalId: criterion.goal_id,
     metrics: metrics.map(adaptMetricToFrontend),
   };

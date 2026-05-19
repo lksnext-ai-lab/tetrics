@@ -351,7 +351,10 @@ export function Dashboard({ goalId }: Readonly<DashboardProps>) {
         let metricWeightChangedAffects = false;
         for (const metric of criterion.metrics) {
           const originalMetric = originalCriterion?.metrics.find(m => m.id === metric.id);
-          if (originalMetric && originalMetric.weight !== metric.weight && criterion.aggregationStrategy === 'weighted_sum_normalized') {
+          if (originalMetric && originalMetric.weight !== metric.weight &&
+              (criterion.aggregationStrategy === 'weighted_sum_normalized' ||
+               criterion.aggregationStrategy === 'direct_metric_weights' ||
+               criterion.aggregationStrategy === 'custom')) {
             metricWeightChangedAffects = true;
           }
           await api.metrics.update(metric.id, {
@@ -360,6 +363,7 @@ export function Dashboard({ goalId }: Readonly<DashboardProps>) {
             unit: metric.unit,
             scale_type: metric.scaleType,
             collection_method: metric.collectionMethod,
+            normalization_method: metric.normalizationMethod || 'none',
             weight: metric.weight,
             target_value: metric.targetValue,
             direction: metric.direction === 'maximize' ? 'higher_is_better' : 'lower_is_better',

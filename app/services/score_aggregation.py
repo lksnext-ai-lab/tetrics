@@ -21,6 +21,7 @@ from app.models.domain import (
     Measurement,
     Metric,
     MetricUnit,
+    NormalizationMethod,
 )
 from app.repositories import (
     AggregatedScoreRepository,
@@ -36,7 +37,6 @@ from app.schemas.aggregated_score import AggregatedScoreCreate
 # Constants
 # =============================================================================
 
-PERCENT_UNIT_NORMALIZE_DIVISOR = 100.0
 ZERO_TOLERANCE = 1e-9  # For floating point comparisons
 
 
@@ -123,39 +123,45 @@ class ScoreAggregationService:
     ) -> List[AggregatedScore]:
         """
         Recalculate all aggregated scores for a criterion across all tool configurations.
-        
+
         This is useful when:
         - A new measurement is added
         - A metric definition changes
         - The aggregation strategy is updated
-        
+
         Args:
             criterion_id: ID of the criterion to recalculate
-            
+
         Returns:
             List of recalculated AggregatedScore instances
         """
         # Validate criterion exists
         self._get_criterion_or_raise(criterion_id)
-        
+
         # Get metrics - if none exist, return empty list (nothing to calculate)
         metrics = self.metric_repo.get_by_criterion(criterion_id)
         if not metrics:
             return []
-        
+
         # Find all tool configurations with measurements for this criterion
         tool_config_ids = self._get_tool_config_ids_for_criterion(metrics)
-        
+
         # Recalculate for each configuration
         recalculated_scores = []
+        affected_tool_configs = set()
         for tool_config_id in tool_config_ids:
             try:
                 score = self.calculate_and_store_score(criterion_id, tool_config_id)
                 recalculated_scores.append(score)
+                affected_tool_configs.add(tool_config_id)
             except ValidationError:
                 # Skip configurations with incomplete data
                 continue
-        
+
+        # Update total scores for all affected tool configurations
+        for tool_config_id in affected_tool_configs:
+            self.calculate_and_update_tool_total_score(tool_config_id)
+
         return recalculated_scores
     
     # =========================================================================
@@ -208,13 +214,18 @@ class ScoreAggregationService:
             Measurement.is_active == True
         ).all()
     
-    def _get_max_value_for_metric(self, metric_id: UUID) -> float:
-        """Get the maximum value for a metric across all active measurements."""
-        result = self.db.query(func.max(Measurement.value)).filter(
+    def _get_min_max_for_metric(self, metric_id: UUID) -> Tuple[float, float]:
+        """Get the min and max values for a metric across all active measurements in a single query."""
+        result = self.db.query(
+            func.min(Measurement.value),
+            func.max(Measurement.value)
+        ).filter(
             Measurement.metric_id == metric_id,
             Measurement.is_active == True
-        ).scalar()
-        return result if result is not None else 0.0
+        ).first()
+        min_val = result[0] if result[0] is not None else 0.0
+        max_val = result[1] if result[1] is not None else 0.0
+        return (min_val, max_val)
     
     def _get_tool_config_ids_for_criterion(self, metrics: List[Metric]) -> set[UUID]:
         """Get all unique tool configuration IDs that have measurements for these metrics."""
@@ -248,6 +259,7 @@ class ScoreAggregationService:
         strategy_handlers = {
             AggregationStrategy.WEIGHTED_AVERAGE: self._calculate_weighted_average,
             AggregationStrategy.WEIGHTED_SUM_NORMALIZED: self._calculate_weighted_sum_normalized,
+            AggregationStrategy.DIRECT_METRIC_WEIGHTS: self._calculate_direct_metric_weights,
             AggregationStrategy.CUSTOM: self._calculate_custom,
         }
         
@@ -281,43 +293,42 @@ class ScoreAggregationService:
         measurements_by_metric: Dict[UUID, List[Measurement]]
     ) -> Tuple[float, Dict]:
         """
-        Weighted average strategy.
-        
-        Formula: criterion_weight × (Σ(metric_value × metric_weight) / Σ(metric_weight))
-        
-        This strategy:
-        1. Calculates weighted average of all metric measurements
-        2. Multiplies by the criterion weight
+        Weighted average of normalized metric values.
+
+        Each metric is normalized per its normalization_method before averaging.
+
+        Formula: criterion_weight × (Σ(normalized_value × metric_weight) / Σ(metric_weight))
         """
         weighted_sum = 0.0
         total_weight = 0.0
         component_metrics = {}
-        
+
         for metric in metrics:
             if metric.id not in measurements_by_metric:
                 continue
-            
-            # Use the most recent measurement
+
             measurements = measurements_by_metric[metric.id]
             latest_measurement = max(measurements, key=lambda m: m.date)
-            metric_value = latest_measurement.value
-            
-            weighted_sum += metric_value * metric.weight
+            raw_value = latest_measurement.value
+            normalized_value = self._normalize_metric_value(metric, raw_value)
+
+            weighted_sum += normalized_value * metric.weight
             total_weight += metric.weight
-            
+
             component_metrics[str(metric.id)] = {
                 "name": metric.name,
-                "value": metric_value,
+                "raw_value": raw_value,
+                "normalized_value": normalized_value,
                 "weight": metric.weight,
-                "contribution": metric_value * metric.weight
+                "contribution": normalized_value * metric.weight
             }
-        
+
         if total_weight < ZERO_TOLERANCE:
             raise ValidationError("Total metric weight is zero")
-        
+
         weighted_average = weighted_sum / total_weight
         score = weighted_average * criterion.weight
-        
+
         return score, component_metrics
     
     def _calculate_weighted_sum_normalized(
@@ -327,56 +338,82 @@ class ScoreAggregationService:
         measurements_by_metric: Dict[UUID, List[Measurement]]
     ) -> Tuple[float, Dict]:
         """
-        Weighted sum of normalized metrics strategy.
-        
-        Normalization rules:
-        - Percentage metrics: normalized = value / 100
-        - Cardinal metrics: normalized = value / max_value_in_db
-        
-        Direction handling:
-        - HIGHER_IS_BETTER with positive weight: positive contribution
-        - HIGHER_IS_BETTER with negative weight: inverted contribution
-        - LOWER_IS_BETTER with positive weight: inverted contribution (penalty)
-        - LOWER_IS_BETTER with negative weight: contribution as-is (already encoded)
-        - TARGET_VALUE: treated as HIGHER_IS_BETTER
-        
-        Formula: Σ(adjusted_contribution for each metric)
+        Weighted sum of normalized metrics, multiplied by criterion weight.
+
+        Each metric is normalized per its normalization_method, then:
+        contribution = metric.weight * normalized_value
+
+        Negative weights encode penalties — no direction-based inversion needed.
+
+        Formula: criterion_weight × Σ(metric_weight × normalized_value)
         """
         component_metrics = {}
         total_score = 0.0
-        
+
         for metric in metrics:
             if metric.id not in measurements_by_metric:
                 continue
-            
+
             measurements = measurements_by_metric[metric.id]
             latest_measurement = max(measurements, key=lambda m: m.date)
             current_value = latest_measurement.value
-            
-            # Normalize the value
+
             normalized_value = self._normalize_metric_value(metric, current_value)
-            
-            # Calculate base weighted contribution
-            weighted_normalized = metric.weight * normalized_value
-            
-            # Adjust for optimization direction
-            contribution = self._adjust_for_direction(
-                weighted_normalized, metric.weight, metric.direction
-            )
-            
+            contribution = metric.weight * normalized_value
+
             total_score += contribution
-            
+
             component_metrics[str(metric.id)] = {
                 "name": metric.name,
                 "raw_value": current_value,
                 "normalized_value": normalized_value,
                 "weight": metric.weight,
-                "direction": metric.direction.value if hasattr(metric.direction, 'value') else metric.direction,
                 "contribution": contribution
             }
-        
+
+        score = total_score * criterion.weight
+        return score, component_metrics
+
+    def _calculate_direct_metric_weights(
+        self,
+        criterion: EvaluationCriterion,
+        metrics: List[Metric],
+        measurements_by_metric: Dict[UUID, List[Measurement]]
+    ) -> Tuple[float, Dict]:
+        """
+        Direct metric weights strategy — criterion weight is bypassed.
+
+        Each metric's weight contributes directly to the total score with no
+        criterion-level multiplier. Negative weights encode penalties.
+
+        Formula: Σ(metric_weight × normalized_value)
+        """
+        component_metrics = {}
+        total_score = 0.0
+
+        for metric in metrics:
+            if metric.id not in measurements_by_metric:
+                continue
+
+            measurements = measurements_by_metric[metric.id]
+            latest_measurement = max(measurements, key=lambda m: m.date)
+            current_value = latest_measurement.value
+
+            normalized_value = self._normalize_metric_value(metric, current_value)
+            contribution = metric.weight * normalized_value
+
+            total_score += contribution
+
+            component_metrics[str(metric.id)] = {
+                "name": metric.name,
+                "raw_value": current_value,
+                "normalized_value": normalized_value,
+                "weight": metric.weight,
+                "contribution": contribution
+            }
+
         return total_score, component_metrics
-    
+
     def _calculate_custom(
         self,
         criterion: EvaluationCriterion,
@@ -385,73 +422,51 @@ class ScoreAggregationService:
     ) -> Tuple[float, Dict]:
         """
         Custom aggregation strategy.
-        
-        Currently delegates to weighted_sum_normalized.
+
+        Delegates to direct_metric_weights by default.
         Can be extended for criterion-specific logic based on dimension.
         """
         # Future extension point: criterion.dimension-based routing
-        return self._calculate_weighted_sum_normalized(
+        return self._calculate_direct_metric_weights(
             criterion, metrics, measurements_by_metric
         )
     
     # =========================================================================
-    # Normalization and Direction Handling
+    # Normalization
     # =========================================================================
-    
+
     def _normalize_metric_value(self, metric: Metric, value: float) -> float:
         """
-        Normalize a metric value based on its unit type.
-        
-        Args:
-            metric: The metric being normalized
-            value: The raw measurement value
-            
-        Returns:
-            Normalized value between 0 and 1 (typically)
+        Normalize a metric value based on the metric's normalization_method.
+
+        - none: return raw value unchanged
+        - max:  value / max(all active measurements for this metric)
+        - min:  value / min(all active measurements for this metric)
         """
-        unit = self._get_metric_unit_string(metric)
-        
-        if unit.lower() == "percent":
-            return value / PERCENT_UNIT_NORMALIZE_DIVISOR
-        else:
-            # Cardinal metric: normalize by max value in database
-            max_value = self._get_max_value_for_metric(metric.id)
-            if max_value < ZERO_TOLERANCE:
+        method = self._get_normalization_method_string(metric)
+
+        if method == NormalizationMethod.NONE:
+            return value
+
+        min_val, max_val = self._get_min_max_for_metric(metric.id)
+
+        if method == NormalizationMethod.MAX:
+            if max_val < ZERO_TOLERANCE:
                 return 0.0
-            return value / max_value
-    
-    def _get_metric_unit_string(self, metric: Metric) -> str:
-        """Get metric unit as string, handling both enum and string types."""
-        return metric.unit.value if hasattr(metric.unit, 'value') else str(metric.unit)
-    
-    def _adjust_for_direction(
-        self,
-        weighted_normalized: float,
-        weight: float,
-        direction: Direction
-    ) -> float:
-        """
-        Adjust contribution based on optimization direction and weight sign.
-        
-        Logic:
-        - LOWER_IS_BETTER with positive weight → invert (penalize higher values)
-        - HIGHER_IS_BETTER with negative weight → invert (don't reward higher values)
-        - Otherwise → keep as-is
-        """
-        direction_str = self._get_direction_string(direction)
-        is_lower_better = direction_str.lower() == "lower_is_better"
-        is_higher_better = direction_str.lower() in ["higher_is_better", "target_value"]
-        
-        if is_lower_better and weight > 0:
-            return -weighted_normalized
-        elif is_higher_better and weight < 0:
-            return -weighted_normalized
-        else:
-            return weighted_normalized
-    
-    def _get_direction_string(self, direction: Direction) -> str:
-        """Get direction as string, handling both enum and string types."""
-        return direction.value if hasattr(direction, 'value') else str(direction)
+            return value / max_val
+
+        if method == NormalizationMethod.MIN:
+            if min_val < ZERO_TOLERANCE:
+                return 0.0
+            return value / min_val
+
+        return value
+
+    def _get_normalization_method_string(self, metric: Metric) -> str:
+        """Get normalization method as string, handling both enum and string types."""
+        if hasattr(metric.normalization_method, 'value'):
+            return metric.normalization_method.value
+        return str(metric.normalization_method)
     
     # =========================================================================
     # Score Storage
