@@ -138,23 +138,9 @@ export function GoalDialog({
       };
 
       if (goal) {
-        // Update existing goal
+        // Update existing goal only
         await api.goals.update(goal.id, goalData);
-        
-        // Update evaluation program if fields were modified
-        if (evaluationProgram) {
-          const timePeriodDate = new Date(timePeriod);
-          const timePeriodISO = timePeriodDate.toISOString();
-          
-          await api.evaluationPrograms.update(evaluationProgram.id, {
-            organization_context: organizationContext,
-            time_period: timePeriodISO,
-            responsible_team: responsibleTeam,
-            validity_period: validityPeriod ? Number.parseInt(validityPeriod, 10) : undefined,
-            reevaluation_triggers: reevaluationTriggers.length > 0 ? reevaluationTriggers : undefined,
-          });
-        }
-        
+
         toast({
           title: 'Success',
           description: 'Goal updated successfully.',
@@ -196,12 +182,12 @@ export function GoalDialog({
         </DialogHeader>
         <form onSubmit={handleSubmit}>
           <div className="space-y-6 py-4">
-            {/* Evaluation Program Section - show for new goals or when editing */}
-            {(!goal || evaluationProgram) && (
+            {/* Evaluation Program Section - only show for new goals (no existing program) */}
+            {!goal && !evaluationProgram && (
               <div className="space-y-4 pb-4 border-b">
                 <h3 className="text-lg font-semibold">Evaluation Program</h3>
                 <p className="text-sm text-muted-foreground">
-                  {goal ? 'Update the evaluation program details below.' : 'Every goal needs an evaluation program. Fill in the details below.'}
+                  Every goal needs an evaluation program. Fill in the details below.
                 </p>
                 <div className="space-y-2">
                   <Label htmlFor="organizationContext">

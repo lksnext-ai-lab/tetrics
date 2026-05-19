@@ -9,7 +9,8 @@ import { Toaster } from '@/components/ui/toaster';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/auth-context';
 import { AdminOnlyButton } from '@/components/ui/admin-only-button';
-import { PlusCircle } from 'lucide-react';
+import { ProgramDialog } from './program-dialog';
+import { Edit, PlusCircle } from 'lucide-react';
 import type { 
   EvaluationProgram, 
   Goal, 
@@ -40,6 +41,7 @@ export function GoalsOverview({ onGoalSelect }: Readonly<GoalsOverviewProps>) {
   const [scores, setScores] = useState<AggregatedScore[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isGoalDialogOpen, setIsGoalDialogOpen] = useState(false);
+  const [isProgramDialogOpen, setIsProgramDialogOpen] = useState(false);
   const [selectedGoal, setSelectedGoal] = useState<Goal | null>(null);
   const { toast } = useToast();
 
@@ -110,6 +112,10 @@ export function GoalsOverview({ onGoalSelect }: Readonly<GoalsOverviewProps>) {
     loadData(); // Reload all data after successful create/update
   };
 
+  const handleEditProgram = () => {
+    setIsProgramDialogOpen(true);
+  };
+
   const newGoalButton = (
     <AdminOnlyButton
       allowed={isAdmin}
@@ -140,9 +146,20 @@ export function GoalsOverview({ onGoalSelect }: Readonly<GoalsOverviewProps>) {
                 <div className="mb-6">
                   <div className="flex items-start justify-between mb-4">
                     <div>
-                      <h2 className="text-3xl font-bold tracking-tight mb-2">
-                        Evaluation Program Overview
-                      </h2>
+                      <div className="flex items-center gap-2 mb-2">
+                        <h2 className="text-3xl font-bold tracking-tight">
+                          Evaluation Program Overview
+                        </h2>
+                        <AdminOnlyButton
+                          allowed={isAdmin}
+                          tooltip="Admin role required to edit evaluation program."
+                          variant="ghost"
+                          size="icon"
+                          onClick={handleEditProgram}
+                        >
+                          <Edit className="h-4 w-4" />
+                        </AdminOnlyButton>
+                      </div>
                       <div className="text-sm text-muted-foreground space-y-1">
                         <p>
                           <span className="font-medium">Organization:</span>{' '}
@@ -198,6 +215,12 @@ export function GoalsOverview({ onGoalSelect }: Readonly<GoalsOverviewProps>) {
         open={isGoalDialogOpen}
         onOpenChange={setIsGoalDialogOpen}
         goal={selectedGoal}
+        evaluationProgram={evaluationProgram}
+        onSuccess={handleGoalDialogSuccess}
+      />
+      <ProgramDialog
+        open={isProgramDialogOpen}
+        onOpenChange={setIsProgramDialogOpen}
         evaluationProgram={evaluationProgram}
         onSuccess={handleGoalDialogSuccess}
       />
