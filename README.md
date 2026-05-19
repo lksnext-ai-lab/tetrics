@@ -48,6 +48,14 @@ Based on a 20-month longitudinal study across six evaluation cycles (March 2024 
 - **Custom agents outperform**: Custom-prompted agents outperformed generic tools by 20-90% across quality metrics
 - **Continuous monitoring is essential**: Temporal patterns are invisible in point-in-time evaluations
 
+## 🗺️ Roadmap
+
+- **Continuous Deployment for LKS Next dev servers**: Add a CD integration so versions are easier to build and publish.
+- **Keycloak + LKS Next auth**: Connect Keycloak with LKS Next LDAP or authenticator.
+- **UX improvements**: Refine the dashboard experience based on ongoing feedback.
+- **Automate measurements registration**: Expose the backend to an agent to streamline metric collection.
+- **LLM-driven test automation thesis**: A Bachelor's Final Thesis (LKS Next and the University of the Basque Country, EHU/UPV) is building unit and integration tests via LLM agent orchestrations and recording results in Tetrics.
+
 ## 🏗️ Architecture
 
 The framework adapts Goal-Question-Metric methodology to LLM-specific challenges including rapid evolution, prompt engineering, and continuous tracking. Key components:
