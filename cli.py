@@ -130,6 +130,21 @@ def _print_entity(data: dict, title: str = "Result") -> None:
     console.print(Panel("\n".join(lines), title=title))
 
 
+# Nested relation keys that the API may return — stripped from all CLI output
+# to keep responses focused and LLM-friendly. Use the nested subcommands
+# (e.g. `programs goals <id>`) to fetch related entities explicitly.
+_RELATION_KEYS = frozenset({"goals", "evaluation_criteria", "metrics", "measurements", "aggregated_scores"})
+
+
+def _strip_relations(data: Any) -> Any:
+    """Remove nested relation keys so every response is flat and focused."""
+    if isinstance(data, list):
+        return [_strip_relations(item) for item in data]
+    if isinstance(data, dict):
+        return {k: v for k, v in data.items() if k not in _RELATION_KEYS}
+    return data
+
+
 def _handle_response(resp: httpx.Response) -> Any:
     if resp.status_code >= 400:
         try:
@@ -138,7 +153,7 @@ def _handle_response(resp: httpx.Response) -> Any:
             detail = resp.text
         rprint(f"[red]Error {resp.status_code}[/red]: {detail}")
         raise typer.Exit(1)
-    return resp.json()
+    return _strip_relations(resp.json())
 
 
 def _bool_opt(help_text: str) -> typer.Option:
