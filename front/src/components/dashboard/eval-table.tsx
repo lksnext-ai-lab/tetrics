@@ -12,7 +12,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Edit, ChevronDown, ChevronRight, Weight, ArrowRightLeft } from 'lucide-react';
+import { Edit, ChevronDown, ChevronRight, Weight } from 'lucide-react';
 import React, { useState } from 'react';
 import type { Measurement as MeasurementType, EvaluationCriterion, LLMToolConfiguration, AggregatedScore, Measurement } from '@/lib/data';
 
@@ -109,6 +109,28 @@ function MetricMeasurementCell({
   );
 }
 
+// Component for truncatable text with see more/see less
+function TruncatableText({ text, maxLength = 100 }: Readonly<{ text: string; maxLength?: number }>) {
+  const [expanded, setExpanded] = useState(false);
+  if (text.length <= maxLength) return <span className="text-xs text-muted-foreground">{text}</span>;
+
+  return (
+    <div className="text-xs text-muted-foreground">
+      {expanded ? (
+        <>
+          {text}{' '}
+          <button onClick={() => setExpanded(false)} className="text-primary hover:underline whitespace-nowrap">see less</button>
+        </>
+      ) : (
+        <>
+          {text.slice(0, maxLength)}...{' '}
+          <button onClick={() => setExpanded(true)} className="text-primary hover:underline whitespace-nowrap">see more</button>
+        </>
+      )}
+    </div>
+  );
+}
+
 // Component for overall score cell
 function OverallScoreCell({ score }: Readonly<{ score: string }>) {
   return (
@@ -191,7 +213,7 @@ export function EvalTable({ criteria, llmTools, scores, measurements, onScoreUpd
             <TableHeader className="bg-muted/50">
               <TableRow>
                 <TableHead className="w-[300px] font-semibold text-base py-6">Evaluation Criterion / Metric</TableHead>
-                <TableHead className="font-semibold text-base py-6">Details</TableHead>
+                <TableHead className="font-semibold text-base py-6">Weight</TableHead>
                 {llmTools.map((tool) => (
                   <TableHead key={tool.id} className="text-center font-semibold text-base min-w-[200px] py-6">
                     <ToolHeaderCell tool={tool} onEditLlmTool={onEditLlmTool} />
@@ -219,13 +241,17 @@ export function EvalTable({ criteria, llmTools, scores, measurements, onScoreUpd
                         tabIndex={0}
                       >
                         {openCriteria[criterion.id] ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-                        <span>{criterion.dimension}</span>
+                        <div>
+                          <span>{criterion.dimension}</span>
+                          {criterion.description && (
+                            <TruncatableText text={criterion.description} />
+                          )}
+                        </div>
                       </div>
                     </TableCell>
-                    <TableCell className="text-sm text-muted-foreground">
-                      <div className='flex gap-4 items-center'>
-                        <div className='flex items-center gap-1'><Weight className='w-4 h-4' /> {criterion.weight}</div>
-                        <div className='flex items-center gap-1'><ArrowRightLeft className='w-4 h-4' /> {criterion.aggregationStrategy}</div>
+                    <TableCell className="text-center tabular-nums">
+                      <div className="flex items-center justify-center gap-1">
+                        <Weight className="w-4 h-4 text-muted-foreground" /> {criterion.weight}
                       </div>
                     </TableCell>
                     {llmTools.map((tool) => {
@@ -241,11 +267,18 @@ export function EvalTable({ criteria, llmTools, scores, measurements, onScoreUpd
                   {openCriteria[criterion.id] && criterion.metrics.map(metric => (
                     <TableRow key={metric.id} className="hover:bg-muted/10">
                       <TableCell className="pl-12">
-                        <div className="flex items-center gap-3">
+                        <div>
                           <span className="font-medium">{metric.name}</span>
+                          {metric.definition && (
+                            <TruncatableText text={metric.definition} />
+                          )}
                         </div>
                       </TableCell>
-                      <TableCell className="text-sm text-muted-foreground">{metric.definition}</TableCell>
+                      <TableCell className="text-center tabular-nums text-sm text-muted-foreground">
+                        <div className="flex items-center justify-center gap-1">
+                          <Weight className="w-3.5 h-3.5" /> {metric.weight}
+                        </div>
+                      </TableCell>
                         {llmTools.map((tool) => {
                            const measurement = selectLatestMeasurement(measurements, tool.id, metric.id);
                            const isPercent = metric.unit === 'Percent';

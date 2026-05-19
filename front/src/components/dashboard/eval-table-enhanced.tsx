@@ -83,6 +83,21 @@ type TableRow = {
   criterionId?: string;
 };
 
+function ExpandableDescription({ text }: Readonly<{ text: string }>) {
+  const [show, setShow] = useState(false);
+  return (
+    <div>
+      <button
+        onClick={(e) => { e.stopPropagation(); setShow(!show); }}
+        className="text-xs text-muted-foreground hover:text-foreground font-normal"
+      >
+        {show ? 'Hide description' : 'Show description'}
+      </button>
+      {show && <div className="text-xs text-muted-foreground mt-0.5 font-normal">{text}</div>}
+    </div>
+  );
+}
+
 function InlineWeightInput({ value, onSave, className }: { value: number; onSave: (value: number) => void; className?: string }) {
   const [localValue, setLocalValue] = useState(value.toString());
 
@@ -246,7 +261,12 @@ export function EvalTableEnhanced({ criteria, llmTools, scores, measurements, on
                 }}
               >
                 {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-                <span>{data.criterion.dimension}</span>
+                <div>
+                  <span>{data.criterion.dimension}</span>
+                  {data.criterion.description && (
+                    <ExpandableDescription text={data.criterion.description} />
+                  )}
+                </div>
               </span>
               {canEditTools && (
                 <div className="flex items-center gap-0.5 opacity-0 group-hover/criterion:opacity-100 transition-opacity">
@@ -280,7 +300,12 @@ export function EvalTableEnhanced({ criteria, llmTools, scores, measurements, on
         } else if (data.type === 'metric' && data.metric) {
           return (
             <div className="flex items-center gap-2 group/metric">
-              <span className="font-medium">{data.metric.name}</span>
+              <div>
+                <span className="font-medium">{data.metric.name}</span>
+                {data.metric.definition && (
+                  <ExpandableDescription text={data.metric.definition} />
+                )}
+              </div>
               {canEditTools && (
                 <AdminOnlyButton
                   allowed={canEditTools}
@@ -302,30 +327,32 @@ export function EvalTableEnhanced({ criteria, llmTools, scores, measurements, on
       enableHiding: false,
     },
     {
-      id: 'details',
-      header: 'Details',
+      id: 'weight',
+      header: 'Weight',
       cell: ({ row }) => {
         const data = row.original;
         if (data.type === 'criterion' && data.criterion) {
           const isDirectMetric = data.criterion.aggregationStrategy === 'direct_metric_weights';
           return (
-            <div className="flex gap-4 items-center text-sm text-muted-foreground">
-              {!isDirectMetric && (
-                <div className="flex items-center gap-1">
-                  <Weight className="w-4 h-4" />
-                  <InlineWeightInput
-                    value={data.criterion.weight}
-                    onSave={(newWeight) => onUpdateCriterion?.(data.criterion!.id, 'weight', newWeight)}
-                  />
-                </div>
-              )}
+            <div className="flex flex-col items-center gap-1 text-sm text-muted-foreground">
               <div className="flex items-center gap-1">
-                <ArrowRightLeft className="w-4 h-4" />
+                {!isDirectMetric && (
+                  <>
+                    <Weight className="w-4 h-4" />
+                    <InlineWeightInput
+                      value={data.criterion.weight}
+                      onSave={(newWeight) => onUpdateCriterion?.(data.criterion!.id, 'weight', newWeight)}
+                    />
+                  </>
+                )}
+              </div>
+              <div className="flex items-center gap-1">
+                <ArrowRightLeft className="w-3.5 h-3.5" />
                 <Select
                   value={data.criterion.aggregationStrategy}
                   onValueChange={(v) => onUpdateCriterion?.(data.criterion!.id, 'aggregationStrategy', v)}
                 >
-                  <SelectTrigger className="h-7 w-[150px] text-xs" onClick={(e) => e.stopPropagation()}>
+                  <SelectTrigger className="h-7 w-[140px] text-xs" onClick={(e) => e.stopPropagation()}>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -339,24 +366,28 @@ export function EvalTableEnhanced({ criteria, llmTools, scores, measurements, on
           );
         } else if (data.type === 'metric' && data.metric) {
           const criterion = criteria.find(c => c.id === data.criterionId);
-          const isDirectMetric = criterion?.aggregationStrategy === 'direct_metric_weights';
+          const strategy = criterion?.aggregationStrategy;
+          if (strategy === 'weighted_average') {
+            return null;
+          }
+          const isDirectMetric = strategy === 'direct_metric_weights';
           return (
-            <div className="flex gap-4 items-center text-sm text-muted-foreground">
-              <span className="truncate max-w-[200px]">{data.metric.definition}</span>
-              {isDirectMetric && (
-                <div className="flex items-center gap-1 shrink-0">
-                  <Weight className="w-4 h-4" />
-                  <InlineWeightInput
-                    value={data.metric.weight}
-                    onSave={(newWeight) => onUpdateMetric?.(data.criterionId!, data.metric!.id, 'weight', newWeight)}
-                  />
-                </div>
+            <div className="flex items-center justify-center gap-1">
+              <Weight className="w-3.5 h-3.5 text-muted-foreground" />
+              {isDirectMetric ? (
+                <InlineWeightInput
+                  value={data.metric.weight}
+                  onSave={(newWeight) => onUpdateMetric?.(data.criterionId!, data.metric!.id, 'weight', newWeight)}
+                />
+              ) : (
+                <span className="text-sm tabular-nums">{data.metric.weight}</span>
               )}
             </div>
           );
         }
         return null;
       },
+      size: 160,
       enableHiding: false,
     },
     ...llmTools.map((tool): ColumnDef<TableRow> => ({
@@ -645,7 +676,7 @@ export function EvalTableEnhanced({ criteria, llmTools, scores, measurements, on
                 {table.getHeaderGroups().map((headerGroup) => (
                   <React.Fragment key={headerGroup.id}>
                     {headerGroup.headers.map((header) => {
-                      const canDrag = header.column.id !== 'criterion-metric' && header.column.id !== 'details';
+                      const canDrag = header.column.id !== 'criterion-metric' && header.column.id !== 'weight';
                       const isBeingDragged = draggedColumn === header.column.id;
                       return (
                         <TableHead
