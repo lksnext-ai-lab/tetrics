@@ -42,6 +42,10 @@ KEYCLOAK_REALM = os.getenv("KEYCLOAK_REALM", "tetrics")
 KEYCLOAK_CLIENT_ID = os.getenv("KEYCLOAK_CLIENT_ID", "fastapi-client")
 KEYCLOAK_CLIENT_SECRET = os.getenv("KEYCLOAK_CLIENT_SECRET", "fastapi-client-secret-123")
 
+# CLI admin user credentials — used for password grant to get admin-scoped tokens
+CLI_ADMIN_USER = os.getenv("TETRICS_ADMIN_USER", "admin")
+CLI_ADMIN_PASSWORD = os.getenv("TETRICS_ADMIN_PASSWORD", "admin123")
+
 _token_cache: Optional[str] = None
 _server_cache: str = DEFAULT_SERVER
 _json_mode: bool = False
@@ -80,12 +84,14 @@ def _get_token(token_override: Optional[str] = None) -> str:
         return os.getenv("TETRICS_TOKEN")
     if _token_cache:
         return _token_cache
-    # Auto-fetch via client credentials
+    # Auto-fetch via password grant (admin user) so the CLI always has admin privileges
     token_url = f"{KEYCLOAK_URL}/realms/{KEYCLOAK_REALM}/protocol/openid-connect/token"
     data = {
-        "grant_type": "client_credentials",
+        "grant_type": "password",
         "client_id": KEYCLOAK_CLIENT_ID,
         "client_secret": KEYCLOAK_CLIENT_SECRET,
+        "username": CLI_ADMIN_USER,
+        "password": CLI_ADMIN_PASSWORD,
         "scope": "openid",
     }
     try:
