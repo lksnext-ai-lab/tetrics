@@ -49,11 +49,12 @@ CLI_ADMIN_PASSWORD = os.getenv("TETRICS_ADMIN_PASSWORD", "admin123")
 _token_cache: Optional[str] = None
 _server_cache: str = DEFAULT_SERVER
 _json_mode: bool = False
+_verbose: bool = False
 
 # Pre-parse global flags before Typer processes subcommands, since
 # Typer callbacks don't cascade options to sub-typer commands.
 def _pre_parse_globals() -> None:
-    global _json_mode, _server_cache, _token_cache
+    global _json_mode, _server_cache, _token_cache, _verbose
     new_argv = [sys.argv[0]]
     args = sys.argv[1:]
     i = 0
@@ -61,6 +62,9 @@ def _pre_parse_globals() -> None:
         arg = args[i]
         if arg in ("--json", "-j"):
             _json_mode = True
+            i += 1
+        elif arg in ("--verbose", "-v"):
+            _verbose = True
             i += 1
         elif arg in ("--server", "-s") and i + 1 < len(args):
             _server_cache = args[i + 1].rstrip("/")
@@ -151,6 +155,33 @@ def _strip_relations(data: Any) -> Any:
     return data
 
 
+# Essential fields per entity type for --json output without --verbose.
+# Keeps responses compact (id + name/title) so AI consumers aren't
+# overwhelmed.  Pass --verbose to get every field including timestamps.
+_SUMMARY_FIELDS: Dict[str, List[str]] = {
+    "evaluation_program": ["id", "organization_context", "responsible_team"],
+    "goal": ["id", "purpose"],
+    "evaluation_criterion": ["id", "dimension", "weight", "aggregation_strategy"],
+    "metric": ["id", "name", "unit", "direction"],
+    "llm_tool_configuration": ["id", "tool_name", "model_version"],
+    "measurement": ["id", "value", "metric_id", "llm_tool_configuration_id"],
+    "aggregated_score": ["id", "score", "criterion_id", "tool_config_id"],
+    "user": ["id", "email", "full_name"],
+}
+
+
+def _summarize(data: Any, entity_type: str) -> Any:
+    """Reduce a list of dicts (or a single dict) to only the keys in _SUMMARY_FIELDS."""
+    keys = _SUMMARY_FIELDS.get(entity_type, [])
+    if not keys:
+        return data
+    if isinstance(data, list):
+        return [{k: item[k] for k in keys if k in item} for item in data]
+    if isinstance(data, dict):
+        return {k: data[k] for k in keys if k in data}
+    return data
+
+
 def _handle_response(resp: httpx.Response) -> Any:
     if resp.status_code >= 400:
         try:
@@ -176,13 +207,16 @@ def main(
     server: str = typer.Option(DEFAULT_SERVER, "--server", "-s", help="API base URL"),
     token: Optional[str] = typer.Option(None, "--token", "-t", help="JWT access token"),
     json_out: bool = typer.Option(False, "--json", "-j", help="Output raw JSON"),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Show all fields in list output (JSON only)"),
 ):
-    global _server_cache, _token_cache
+    global _server_cache, _token_cache, _verbose
     _server_cache = server.rstrip("/")
     if json_out:
         _json_mode = True
     if token:
         _token_cache = token
+    if verbose:
+        _verbose = True
 
 
 # ---------------------------------------------------------------------------
@@ -202,6 +236,8 @@ def programs_list(
     resp = _client(_server_cache).get("/domain/evaluation-programs", params={"skip": skip, "limit": limit})
     data = _handle_response(resp)
     if _json_mode:
+        if not _verbose:
+            data = _summarize(data, "evaluation_program")
         return _print_json(data)
     rows = [[d["id"], d["organization_context"], str(d["time_period"]), d["responsible_team"]] for d in data]
     _print_table("Evaluation Programs", ["ID", "Context", "Time Period", "Team"], rows)
@@ -215,6 +251,8 @@ def programs_get(
     resp = _client(_server_cache).get(f"/domain/evaluation-programs/{program_id}")
     data = _handle_response(resp)
     if _json_mode:
+        if not _verbose:
+            data = _summarize(data, "evaluation_program")
         return _print_json(data)
     _print_entity(data, f"Program {program_id}")
 
@@ -293,6 +331,8 @@ def programs_goals(
     resp = _client(_server_cache).get(f"/domain/evaluation-programs/{program_id}/goals")
     data = _handle_response(resp)
     if _json_mode:
+        if not _verbose:
+            data = _summarize(data, "goal")
         return _print_json(data)
     rows = [[d["id"], d["purpose"], d["focus"], d["viewpoint"]] for d in data]
     _print_table(f"Goals for Program {program_id}", ["ID", "Purpose", "Focus", "Viewpoint"], rows)
@@ -315,6 +355,8 @@ def goals_list(
     resp = _client(_server_cache).get("/domain/goals", params={"skip": skip, "limit": limit})
     data = _handle_response(resp)
     if _json_mode:
+        if not _verbose:
+            data = _summarize(data, "goal")
         return _print_json(data)
     rows = [[d["id"], d["purpose"], d["focus"], d["viewpoint"], d.get("evaluation_program_id", "")] for d in data]
     _print_table("Goals", ["ID", "Purpose", "Focus", "Viewpoint", "Program ID"], rows)
@@ -328,6 +370,8 @@ def goals_get(
     resp = _client(_server_cache).get(f"/domain/goals/{goal_id}")
     data = _handle_response(resp)
     if _json_mode:
+        if not _verbose:
+            data = _summarize(data, "goal")
         return _print_json(data)
     _print_entity(data, f"Goal {goal_id}")
 
@@ -402,6 +446,8 @@ def goals_criteria(
     resp = _client(_server_cache).get(f"/domain/goals/{goal_id}/evaluation-criteria")
     data = _handle_response(resp)
     if _json_mode:
+        if not _verbose:
+            data = _summarize(data, "evaluation_criterion")
         return _print_json(data)
     rows = [[d["id"], d["dimension"], str(d.get("weight", 1.0)), d.get("aggregation_strategy", "")] for d in data]
     _print_table(f"Criteria for Goal {goal_id}", ["ID", "Dimension", "Weight", "Aggregation"], rows)
@@ -424,6 +470,8 @@ def criteria_list(
     resp = _client(_server_cache).get("/domain/evaluation-criteria", params={"skip": skip, "limit": limit})
     data = _handle_response(resp)
     if _json_mode:
+        if not _verbose:
+            data = _summarize(data, "evaluation_criterion")
         return _print_json(data)
     rows = [[d["id"], d["dimension"], d.get("goal_id", ""), str(d.get("weight", 1.0)), d.get("aggregation_strategy", "")] for d in data]
     _print_table("Evaluation Criteria", ["ID", "Dimension", "Goal ID", "Weight", "Aggregation"], rows)
@@ -437,6 +485,8 @@ def criteria_get(
     resp = _client(_server_cache).get(f"/domain/evaluation-criteria/{criterion_id}")
     data = _handle_response(resp)
     if _json_mode:
+        if not _verbose:
+            data = _summarize(data, "evaluation_criterion")
         return _print_json(data)
     _print_entity(data, f"Criterion {criterion_id}")
 
@@ -510,6 +560,8 @@ def criteria_metrics(
     resp = _client(_server_cache).get(f"/domain/evaluation-criteria/{criterion_id}/metrics")
     data = _handle_response(resp)
     if _json_mode:
+        if not _verbose:
+            data = _summarize(data, "metric")
         return _print_json(data)
     rows = [[d["id"], d["name"], d["unit"], str(d.get("weight", 1.0)), d.get("direction", "")] for d in data]
     _print_table(f"Metrics for Criterion {criterion_id}", ["ID", "Name", "Unit", "Weight", "Direction"], rows)
@@ -523,6 +575,8 @@ def criteria_scores(
     resp = _client(_server_cache).get(f"/domain/evaluation-criteria/{criterion_id}/aggregated-scores")
     data = _handle_response(resp)
     if _json_mode:
+        if not _verbose:
+            data = _summarize(data, "aggregated_score")
         return _print_json(data)
     rows = [[d["id"], str(d["score"]), d.get("tool_config_id", ""), str(d.get("timestamp", ""))] for d in data]
     _print_table(f"Scores for Criterion {criterion_id}", ["ID", "Score", "Tool Config ID", "Timestamp"], rows)
@@ -566,6 +620,8 @@ def metrics_list(
     resp = _client(_server_cache).get("/domain/metrics", params={"skip": skip, "limit": limit})
     data = _handle_response(resp)
     if _json_mode:
+        if not _verbose:
+            data = _summarize(data, "metric")
         return _print_json(data)
     rows = [[d["id"], d["name"], d["unit"], str(d.get("weight", 1.0)), d.get("direction", "")] for d in data]
     _print_table("Metrics", ["ID", "Name", "Unit", "Weight", "Direction"], rows)
@@ -579,6 +635,8 @@ def metrics_get(
     resp = _client(_server_cache).get(f"/domain/metrics/{metric_id}")
     data = _handle_response(resp)
     if _json_mode:
+        if not _verbose:
+            data = _summarize(data, "metric")
         return _print_json(data)
     _print_entity(data, f"Metric {metric_id}")
 
@@ -687,6 +745,8 @@ def tools_list(
     resp = _client(_server_cache).get("/domain/llm-tool-configurations", params={"skip": skip, "limit": limit})
     data = _handle_response(resp)
     if _json_mode:
+        if not _verbose:
+            data = _summarize(data, "llm_tool_configuration")
         return _print_json(data)
     rows = [[d["id"], d["tool_name"], d["model_version"], str(d.get("total_score", "N/A")), str(d.get("timestamp", ""))] for d in data]
     _print_table("LLM Tool Configurations", ["ID", "Tool", "Model", "Total Score", "Timestamp"], rows)
@@ -700,6 +760,8 @@ def tools_get(
     resp = _client(_server_cache).get(f"/domain/llm-tool-configurations/{config_id}")
     data = _handle_response(resp)
     if _json_mode:
+        if not _verbose:
+            data = _summarize(data, "llm_tool_configuration")
         return _print_json(data)
     _print_entity(data, f"Tool Config {config_id}")
 
@@ -807,6 +869,8 @@ def tools_measurements(
     resp = _client(_server_cache).get(f"/domain/llm-tool-configurations/{config_id}/measurements")
     data = _handle_response(resp)
     if _json_mode:
+        if not _verbose:
+            data = _summarize(data, "measurement")
         return _print_json(data)
     rows = [[d["id"], str(d["value"]), d.get("metric_id", ""), d.get("evaluator", ""), str(d.get("date", ""))] for d in data]
     _print_table(f"Measurements for Config {config_id}", ["ID", "Value", "Metric ID", "Evaluator", "Date"], rows)
@@ -820,6 +884,8 @@ def tools_scores(
     resp = _client(_server_cache).get(f"/domain/llm-tool-configurations/{config_id}/aggregated-scores")
     data = _handle_response(resp)
     if _json_mode:
+        if not _verbose:
+            data = _summarize(data, "aggregated_score")
         return _print_json(data)
     rows = [[d["id"], str(d["score"]), d.get("criterion_id", ""), str(d.get("timestamp", ""))] for d in data]
     _print_table(f"Scores for Config {config_id}", ["ID", "Score", "Criterion ID", "Timestamp"], rows)
@@ -842,6 +908,8 @@ def measurements_list(
     resp = _client(_server_cache).get("/domain/measurements", params={"skip": skip, "limit": limit})
     data = _handle_response(resp)
     if _json_mode:
+        if not _verbose:
+            data = _summarize(data, "measurement")
         return _print_json(data)
     rows = [[d["id"], str(d["value"]), d.get("metric_id", ""), d.get("llm_tool_configuration_id", ""), d.get("evaluator", ""), str(d.get("date", ""))] for d in data]
     _print_table("Measurements", ["ID", "Value", "Metric ID", "Tool Config ID", "Evaluator", "Date"], rows)
@@ -855,6 +923,8 @@ def measurements_get(
     resp = _client(_server_cache).get(f"/domain/measurements/{measurement_id}")
     data = _handle_response(resp)
     if _json_mode:
+        if not _verbose:
+            data = _summarize(data, "measurement")
         return _print_json(data)
     _print_entity(data, f"Measurement {measurement_id}")
 
@@ -942,6 +1012,8 @@ def scores_list(
     resp = _client(_server_cache).get("/domain/aggregated-scores", params={"skip": skip, "limit": limit})
     data = _handle_response(resp)
     if _json_mode:
+        if not _verbose:
+            data = _summarize(data, "aggregated_score")
         return _print_json(data)
     rows = [[d["id"], str(d["score"]), d.get("criterion_id", ""), d.get("tool_config_id", ""), str(d.get("timestamp", ""))] for d in data]
     _print_table("Aggregated Scores", ["ID", "Score", "Criterion ID", "Tool Config ID", "Timestamp"], rows)
@@ -955,6 +1027,8 @@ def scores_get(
     resp = _client(_server_cache).get(f"/domain/aggregated-scores/{score_id}")
     data = _handle_response(resp)
     if _json_mode:
+        if not _verbose:
+            data = _summarize(data, "aggregated_score")
         return _print_json(data)
     _print_entity(data, f"Score {score_id}")
 
@@ -1028,6 +1102,8 @@ def users_get(
     resp = _client(_server_cache).get(f"/users/{user_id}")
     data = _handle_response(resp)
     if _json_mode:
+        if not _verbose:
+            data = _summarize(data, "user")
         return _print_json(data)
     _print_entity(data, f"User {user_id}")
 
@@ -1040,6 +1116,8 @@ def users_get_by_email(
     resp = _client(_server_cache).get(f"/users/email/{email}")
     data = _handle_response(resp)
     if _json_mode:
+        if not _verbose:
+            data = _summarize(data, "user")
         return _print_json(data)
     _print_entity(data, f"User {email}")
 
@@ -1052,6 +1130,8 @@ def users_get_by_external_id(
     resp = _client(_server_cache).get(f"/users/external/{external_id}")
     data = _handle_response(resp)
     if _json_mode:
+        if not _verbose:
+            data = _summarize(data, "user")
         return _print_json(data)
     _print_entity(data, f"User {external_id}")
 
