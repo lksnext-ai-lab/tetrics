@@ -44,7 +44,8 @@ RUN printf '#!/bin/bash\nexec python /app/cli.py "$@"\n' > /usr/local/bin/tetric
 
 # Copy entrypoint script
 COPY docker-entrypoint.sh /app/
-RUN chmod +x /app/docker-entrypoint.sh
+# Normalize line endings (CRLF to LF) and ensure executable permissions
+RUN sed -i 's/\r$//' /app/docker-entrypoint.sh && chmod +x /app/docker-entrypoint.sh
 
 # Expose port
 EXPOSE 8000
@@ -53,5 +54,5 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
-# Run entrypoint script
-ENTRYPOINT ["/app/docker-entrypoint.sh"]
+# Run entrypoint script with sh to handle line endings robustly
+ENTRYPOINT ["/bin/sh", "-c", "sed -i 's/\\r$//' /app/docker-entrypoint.sh && exec /app/docker-entrypoint.sh"]
