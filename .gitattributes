@@ -1,0 +1,26 @@
+# Git attributes for cross-platform compatibility
+# Enforce Unix line endings (LF) for shell scripts
+*.sh text eol=lf
+docker-entrypoint.sh text eol=lf
+
+# Ensure Python files use LF
+*.py text eol=lf
+
+# Ensure scripts use LF
+scripts/** text eol=lf
+
+# Binary files
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.mov binary
+*.mp4 binary
+*.mp3 binary
+*.gz binary
+*.zip binary
+*.7z binary
+*.ttf binary
+*.otf binary
+*.db binary

@@ -237,11 +237,6 @@ export function GoalsOverviewTable({
                     <ArrowUpDown className="ml-2 h-4 w-4" />
                   </Button>
                 </TableHead>
-                {onEditGoal && (
-                  <TableHead className="w-[80px] sticky left-[300px] bg-background z-10">
-                    Actions
-                  </TableHead>
-                )}
                 {sortedLlmTools.map((tool) => (
                   <TableHead key={tool.id} className="text-center min-w-[150px]">
                     <Button
@@ -272,7 +267,7 @@ export function GoalsOverviewTable({
               {sortedGoals.length === 0 ? (
                 <TableRow>
                   <TableCell
-                    colSpan={sortedLlmTools.length + 1 + (onEditGoal ? 1 : 0)}
+                    colSpan={sortedLlmTools.length + 1}
                     className="text-center text-muted-foreground h-24"
                   >
                     No goals found. Create a goal to get started.
@@ -287,7 +282,20 @@ export function GoalsOverviewTable({
                   >
                     <TableCell className="sticky left-0 bg-background z-10 font-medium">
                       <div className="space-y-1">
-                        <div className="font-semibold">{goal.purpose}</div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-semibold">{goal.purpose}</span>
+                          {onEditGoal && (
+                            <AdminOnlyButton
+                              allowed={canEdit}
+                              tooltip="Admin role required to edit goals."
+                              variant="ghost"
+                              size="sm"
+                              onClick={(e) => handleEditClick(e, goal)}
+                            >
+                              <Edit className="h-4 w-4" />
+                            </AdminOnlyButton>
+                          )}
+                        </div>
                         <div className="text-xs text-muted-foreground line-clamp-2">
                           <span className="font-medium">Focus:</span> {goal.focus}
                         </div>
@@ -298,19 +306,6 @@ export function GoalsOverviewTable({
                         )}
                       </div>
                     </TableCell>
-                    {onEditGoal && (
-                      <TableCell className="sticky left-[300px] bg-background z-10">
-                        <AdminOnlyButton
-                          allowed={canEdit}
-                          tooltip="Admin role required to edit goals."
-                          variant="ghost"
-                          size="sm"
-                          onClick={(e) => handleEditClick(e, goal)}
-                        >
-                          <Edit className="h-4 w-4" />
-                        </AdminOnlyButton>
-                      </TableCell>
-                    )}
                     {sortedLlmTools.map((tool) => {
                       const score = getGoalScore(goal.id, tool.id);
                       const rank = getToolRank(goal.id, tool.id);
