@@ -37,7 +37,7 @@ dependencies = [
 package-mode = false
 
 [tool.poetry.scripts]
-tetrics = "cli:app"
+tetrics = "app.cli.main:app"
 
 [project.optional-dependencies]
 dev = [
