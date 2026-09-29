@@ -2,10 +2,9 @@ name: Build
 on:
   push:
     branches:
-      - main
+      - master
   pull_request:
     types: [opened, synchronize, reopened]
-  workflow_dispatch:
 jobs:
   sonarqube:
     name: SonarQube
